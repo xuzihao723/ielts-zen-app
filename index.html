@@ -58,6 +58,7 @@
           appId: "1:239077043165:web:cb634d58900dbe3e6f2434"
         };
         
+        // 你的正式 API Key
         const GEMINI_API_KEY = "AIzaSyA9_7I_BS6kKigZm8fUTKZUTWgIB79ZnRw";
 
         // ==========================================
@@ -120,8 +121,8 @@
           const [taskStatus, setTaskStatus] = useState({}); 
           const [notes, setNotes] = useState({});
           const [extraTasks, setExtraTasks] = useState({}); 
-          const [dailyMoods, setDailyMoods] = useState({}); // 新增：心情天气状态
-          const [expandedDays, setExpandedDays] = useState({}); // 新增：天数面板展开状态
+          const [dailyMoods, setDailyMoods] = useState({}); 
+          const [expandedDays, setExpandedDays] = useState({}); 
           const [streak, setStreak] = useState(0);
           const [lastActive, setLastActive] = useState(null);
           
@@ -153,7 +154,7 @@
             initAuth();
             const unsubscribeAuth = onAuthStateChanged(auth, setUser);
 
-            // 初始化环境音 (使用可靠的免费公开素材)
+            // 初始化环境音 
             audioRefs.current = {
                 rain: new Audio('https://cdn.pixabay.com/download/audio/2021/08/04/audio_0625c1539c.mp3?filename=heavy-rain-nature-sounds-8186.mp3'),
                 cafe: new Audio('https://cdn.pixabay.com/download/audio/2022/01/18/audio_d0a13f69d2.mp3?filename=cafe-background-noise-10-minutes-8014.mp3'),
@@ -193,7 +194,7 @@
                    setTaskStatus(data.taskStatus || {});
                    setNotes(data.notes || {});
                    setExtraTasks(data.extraTasks || {});
-                   setDailyMoods(data.dailyMoods || {}); // 加载心情
+                   setDailyMoods(data.dailyMoods || {}); 
                    setStreak(data.streak || 0);
                    setLastActive(data.lastActive || null);
                    
@@ -292,15 +293,15 @@
             setAiResponse('');
           };
 
-          // --- 5. AI 接口调用 ---
+          // --- 5. ✨ AI 接口调用修复版 ✨ ---
           const fetchGeminiAdvice = async (noteText, taskType) => {
             if (!noteText.trim()) return;
             setIsAiLoading(true); setAiResponse('');
             
-            // 修复：将预览版模型名称改为正式对外开放的 gemini-2.5-flash
-            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
+            // 【修复 1】：更换为正式且稳定的公测版本名称 gemini-1.5-flash 解决 not found 报错
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
             
-            let prompt = `学生关于雅思备考的笔记："${noteText}"。请提供简短鼓励和指导，80字以内。`;
+            let prompt = `学生关于雅思备考的笔记："${noteText}"。请用中文提供简短鼓励和指导，80字以内。`;
             if (taskType === '词汇') prompt = `单词难点："${noteText}"。提供2个地道雅思例句并解释。120字内。`;
             else if (taskType === '写作') prompt = `写作难点："${noteText}"。给出2个高级思路或替换词。120字内。`;
 
@@ -308,12 +309,32 @@
               const response = await fetch(url, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], systemInstruction: { parts: [{ text: "专业雅思名师。" }] } })
+                body: JSON.stringify({ 
+                  contents: [{ parts: [{ text: prompt }] }], 
+                  systemInstruction: { parts: [{ text: "专业雅思名师。" }] } 
+                })
               });
               const data = await response.json();
-              setAiResponse(data.candidates?.[0]?.content?.parts?.[0]?.text || "AI 忙碌中...");
+              
+              // 捕获 API 层面的硬报错 (如 Key 无效、配额超限)
+              if (data.error) throw new Error(data.error.message);
+
+              // 【修复 2】：详细判断各种“无返回内容”的原因，避免干巴巴的“忙碌中”
+              if (data.candidates && data.candidates.length > 0) {
+                  const candidate = data.candidates[0];
+                  if (candidate.finishReason === 'SAFETY') {
+                      setAiResponse("⚠️ 生成的内容触发了 Google 安全策略被拦截，请换一种表达方式重试。");
+                  } else {
+                      setAiResponse(candidate.content?.parts?.[0]?.text || "AI 思考完成，但未返回文字。");
+                  }
+              } else if (data.promptFeedback && data.promptFeedback.blockReason) {
+                  setAiResponse(`⚠️ 你的提示词不符合安全规范被拦截 (${data.promptFeedback.blockReason})`);
+              } else {
+                  setAiResponse("网络波动，AI 暂无返回，请稍后再试。");
+              }
+
             } catch (error) {
-              setAiResponse(`请求失败: 请检查网络或 API Key。`);
+              setAiResponse(`请求失败: ${error.message} (检查网络或稍后刷新重试)`);
             }
             setIsAiLoading(false);
           };
@@ -659,7 +680,7 @@
               {/* 动态背景，支持暗黑模式颜色变化 */}
               <div className="fixed inset-0 pointer-events-none z-0">
                 <div className={`absolute top-[-10%] left-[-10%] w-[50%] h-[50%] rounded-full mix-blend-multiply filter blur-[120px] opacity-40 animate-blob transition-colors duration-700 ${isDarkMode ? 'bg-purple-900' : 'bg-purple-300'}`}></div>
-                <div className={`absolute top-[20%] right-[-10%] w-[40%] h-[40%] rounded-full mix-blend-multiply filter blur-[120px] opacity-40 animate-blob animation-delay-2000 transition-colors duration-700 ${isDarkMode ? 'bg-indigo-900' : 'bg-indigo-300'}`}></div>
+                <div className={`absolute top-[20%] right-[-10%] w-[40%] h-[40%] rounded-full mix-blend-multiply filter blur-[100px] opacity-40 animate-blob animation-delay-2000 transition-colors duration-700 ${isDarkMode ? 'bg-indigo-900' : 'bg-indigo-300'}`}></div>
                 <div className={`absolute bottom-[-20%] left-[20%] w-[60%] h-[60%] rounded-full mix-blend-multiply filter blur-[120px] opacity-40 animate-blob animation-delay-4000 transition-colors duration-700 ${isDarkMode ? 'bg-slate-800' : 'bg-pink-200'}`}></div>
               </div>
 
