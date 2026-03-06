@@ -1,0 +1,693 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>雅思禅 | IELTS Zen Ultra</title>
+    
+    <!-- 引入 Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- 引入模块映射 (Import Map)，让浏览器能直接看懂 React 和 Firebase -->
+    <script type="importmap">
+    {
+      "imports": {
+        "react": "https://esm.sh/react@18.2.0",
+        "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
+        "firebase/app": "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js",
+        "firebase/auth": "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js",
+        "firebase/firestore": "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js",
+        "lucide-react": "https://esm.sh/lucide-react@0.344.0?external=react"
+      }
+    }
+    </script>
+    
+    <!-- 引入 Babel 编译器，用于在浏览器中实时编译 React JSX -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body class="bg-slate-50 text-slate-800">
+    <div id="root"></div>
+
+    <!-- 你的核心 React 代码 -->
+    <script type="text/babel" data-type="module">
+        import React, { useState, useEffect, useRef } from 'react';
+        import { createRoot } from 'react-dom/client';
+        import { initializeApp } from 'firebase/app';
+        import { getAuth, onAuthStateChanged, signInAnonymously } from 'firebase/auth';
+        import { getFirestore, doc, onSnapshot, setDoc } from 'firebase/firestore';
+        import { 
+          Flame, LayoutDashboard, CalendarCheck, Edit3, 
+          X, Save, Trash2, Clock, CheckCircle2, Sparkles 
+        } from 'lucide-react';
+
+        // ==========================================
+        // ⚠️ 部署前必须修改的配置区域 ⚠️
+        // ==========================================
+        
+        // 1. 填入你的 Firebase 配置信息 (从 Firebase 控制台获取)
+        const firebaseConfig = {
+          apiKey: "AIzaSyDHAmmAdho5X2ZwnUuCPFZkFpfqKuDB2_o",
+          authDomain: "ielts-zen.firebaseapp.com",
+          projectId: "ielts-zen",
+          storageBucket: "ielts-zen.firebasestorage.app",
+          messagingSenderId: "239077043165",
+          appId: "1:239077043165:web:cb634d58900dbe3e6f2434"
+        };
+        
+        // 2. 填入你的 Gemini API Key (从 Google AI Studio 获取)
+        const GEMINI_API_KEY = "AIzaSyA9_7I_BS6kKigZm8fUTKZUTWgIB79ZnRw";
+
+        // ==========================================
+
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+
+        // 静态数据：周计划任务库
+        const WEEK_TASKS = [
+          { dayId: 1, dayName: '星期一', en: 'Monday', tasks: [
+            { id: 'mon_1', type: '词汇', color: 'bg-purple-100 text-purple-700', text: '词汇拓展：结合语境，学习并背诵 60 个新单词。' },
+            { id: 'mon_2', type: '听力', color: 'bg-blue-100 text-blue-700', text: '听力实战：完成 1-2 套雅思听力真题，重点进行错题精听。' }
+          ]},
+          { dayId: 2, dayName: '星期二', en: 'Tuesday', tasks: [
+            { id: 'tue_1', type: '词汇', color: 'bg-purple-100 text-purple-700', text: '词汇复习：根据记忆曲线，复习并新背诵 60 个单词。' },
+            { id: 'tue_2', type: '写作', color: 'bg-orange-100 text-orange-700', text: '小作文 (Task 1)：练习图表描述，注意数据对比句型。' },
+            { id: 'tue_3', type: '阅读', color: 'bg-emerald-100 text-emerald-700', text: '阅读练习：计时完成 1 个雅思阅读 Section，圈出长难句。' }
+          ]},
+          { dayId: 3, dayName: '星期三', en: 'Wednesday', tasks: [
+            { id: 'wed_1', type: '听力', color: 'bg-blue-100 text-blue-700', text: '专项提升：针对薄弱题型（如地图题、配对题）进行突破。' },
+            { id: 'wed_2', type: '口语', color: 'bg-pink-100 text-pink-700', text: '口语对练：与搭档进行 Part 1 & 2 模拟对话，录音并回顾。' }
+          ]},
+          { dayId: 4, dayName: '星期四', en: 'Thursday', tasks: [
+            { id: 'thu_1', type: '词汇', color: 'bg-purple-100 text-purple-700', text: '综合复习：盘点回顾本周前三天积累的所有生词。' },
+            { id: 'thu_2', type: '写作', color: 'bg-orange-100 text-orange-700', text: '大作文 (Task 2)：练习议论文写作，构建清晰逻辑框架。' }
+          ]},
+          { dayId: 5, dayName: '星期五', en: 'Friday', tasks: [
+            { id: 'fri_1', type: '调整', color: 'bg-slate-200 text-slate-700', text: '缓冲休息日：整理本周错题集，轻松翻阅笔记，为周末蓄力。' }
+          ]}
+        ];
+
+        const TOTAL_TASKS = WEEK_TASKS.reduce((acc, curr) => acc + curr.tasks.length, 0);
+
+        const getWeekId = (date = new Date()) => {
+          const d = new Date(date);
+          const day = d.getDay();
+          const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+          const monday = new Date(d.setDate(diff));
+          return monday.toISOString().split('T')[0]; 
+        };
+
+        function App() {
+          const [user, setUser] = useState(null);
+          const [activeTab, setActiveTab] = useState('dashboard');
+          
+          const [taskStatus, setTaskStatus] = useState({}); 
+          const [notes, setNotes] = useState({});
+          const [extraTasks, setExtraTasks] = useState({}); 
+          const [streak, setStreak] = useState(0);
+          const [lastActive, setLastActive] = useState(null);
+          
+          const [noteModal, setNoteModal] = useState({ isOpen: false, taskId: null, text: '', taskType: '' });
+          const [loading, setLoading] = useState(true);
+          
+          const [aiResponse, setAiResponse] = useState('');
+          const [isAiLoading, setIsAiLoading] = useState(false);
+          const [dailyQuote, setDailyQuote] = useState('今天也是为了雅思奋斗的一天 🚀');
+          const [isQuoteLoading, setIsQuoteLoading] = useState(false);
+
+          const countdownDate = new Date('2026-05-20'); 
+
+        useEffect(() => {
+          const initAuth = async () => {
+            try {
+              await signInAnonymously(auth);
+            } catch (err) {
+              console.error("Auth error:", err);
+              // 修复：如果认证失败，停止 Loading 并提示用户，防止无限转圈
+              alert("Firebase 连接或登录失败！\n请检查：\n1. API Key 是否复制完整？\n2. Firebase 控制台的 Authentication 中是否开启了【匿名登录 (Anonymous)】？\n\n错误代码: " + err.code);
+              setLoading(false);
+            }
+          };
+          initAuth();
+
+          const unsubscribeAuth = onAuthStateChanged(auth, (currentUser) => {
+            setUser(currentUser);
+          });
+          return () => unsubscribeAuth();
+        }, []);
+
+        useEffect(() => {
+          if (!user) return;
+
+          const dataRef = doc(db, 'users', user.uid, 'learningData', 'progress');
+            
+            const unsubscribeData = onSnapshot(dataRef, async (docSnap) => {
+              if (docSnap.exists()) {
+                const data = docSnap.data();
+                let loadedTaskStatus = data.taskStatus || {};
+                
+                const currentWeekId = getWeekId();
+                
+                if (data.weekId && data.weekId !== currentWeekId && new Date(currentWeekId) > new Date(data.weekId)) {
+                   const archiveRef = doc(db, 'users', user.uid, 'archives', data.weekId);
+                   await setDoc(archiveRef, {
+                     taskStatus: loadedTaskStatus,
+                     notes: data.notes || {},
+                     extraTasks: data.extraTasks || {},
+                     archivedAt: new Date().toISOString()
+                   });
+                   
+                   const resetData = { taskStatus: {}, notes: {}, extraTasks: {}, weekId: currentWeekId };
+                   setTaskStatus({});
+                   setNotes({});
+                   setExtraTasks({});
+                   await setDoc(dataRef, resetData, { merge: true });
+                } else {
+                   setTaskStatus(loadedTaskStatus);
+                   setNotes(data.notes || {});
+                   setExtraTasks(data.extraTasks || {});
+                   setStreak(data.streak || 0);
+                   setLastActive(data.lastActive || null);
+                   
+                   if (!data.weekId) {
+                     await setDoc(dataRef, { weekId: currentWeekId }, { merge: true });
+                   }
+                }
+              }
+              setLoading(false);
+            }, (err) => {
+              console.error("Firestore error:", err);
+              setLoading(false);
+            });
+
+            return () => unsubscribeData();
+          }, [user]);
+
+          const syncToCloud = async (newData) => {
+            if (!user) return;
+            const dataRef = doc(db, 'users', user.uid, 'learningData', 'progress');
+            await setDoc(dataRef, newData, { merge: true });
+          };
+
+          const handleToggleTask = (taskId) => {
+            const currentStatus = taskStatus[taskId];
+            let newStatus = null;
+            
+            if (!currentStatus) newStatus = 'completed';
+            else if (currentStatus === 'completed') newStatus = 'skipped';
+            else newStatus = null;
+
+            const newTaskStatus = { ...taskStatus, [taskId]: newStatus };
+            
+            const today = new Date().toDateString();
+            let newStreak = streak;
+            
+            if (newStatus === 'completed' && lastActive !== today) {
+              if (!lastActive) {
+                newStreak = 1;
+              } else {
+                const lastDate = new Date(lastActive);
+                const diffDays = Math.floor((new Date(today) - lastDate) / (1000 * 60 * 60 * 24));
+                if (diffDays === 1) {
+                  newStreak += 1;
+                } else if (diffDays > 1) {
+                  newStreak = 1; 
+                }
+              }
+              setStreak(newStreak);
+              setLastActive(today);
+            }
+
+            setTaskStatus(newTaskStatus);
+            syncToCloud({ 
+              taskStatus: newTaskStatus, 
+              ...(newStatus === 'completed' ? { streak: newStreak, lastActive: today } : {})
+            });
+          };
+
+          const handleExtraTaskChange = (dayId, text) => {
+            setExtraTasks(prev => ({ ...prev, [dayId]: text }));
+          };
+
+          const handleExtraTaskBlur = () => {
+            syncToCloud({ extraTasks });
+          };
+
+          const saveNote = () => {
+            if (!noteModal.taskId) return;
+            const newNotes = { ...notes, [noteModal.taskId]: noteModal.text };
+            setNotes(newNotes);
+            syncToCloud({ notes: newNotes });
+            setNoteModal({ isOpen: false, taskId: null, text: '', taskType: '' });
+            setAiResponse('');
+          };
+
+          const fetchGeminiAdvice = async (noteText, taskType) => {
+            if (!noteText.trim()) return;
+            setIsAiLoading(true);
+            setAiResponse('');
+
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
+
+            let prompt = `学生关于雅思备考遇到困难的笔记："${noteText}"。请用中文提供一个非常简短、鼓励人心的实用备考建议。字数限制在 80 字以内。`;
+            
+            if (taskType === '词汇') {
+              prompt = `学生在背雅思单词时记录了难点："${noteText}"。请根据此笔记，提供 2 个地道的高分雅思真题例句，并附带简短的中文解释，帮助学生加深记忆。字数限制在 120 字以内。`;
+            } else if (taskType === '写作') {
+              prompt = `学生在练习雅思写作时遇到瓶颈："${noteText}"。请一针见血地给出 2 个能用于雅思作文的高级观点、思路角度或可替换的高级词汇。字数限制在 120 字以内。`;
+            }
+            
+            const payload = {
+              contents: [{ parts: [{ text: prompt }] }],
+              systemInstruction: { parts: [{ text: "你是一位专业且极具鼓励性的雅思辅导名师。你需要针对学生的难点提供一针见血的建议，语气要温和且富有动力。" }] }
+            };
+
+            try {
+              const response = await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+              });
+              const data = await response.json();
+              if (data.error) throw new Error(data.error.message);
+              const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+              setAiResponse(text || "导师目前正在思考，请稍后再试。");
+            } catch (error) {
+              setAiResponse(`出错了: ${error.message}。请检查 API Key 是否正确填写。`);
+            }
+            setIsAiLoading(false);
+          };
+
+          const fetchDailyQuote = async (progressPercent) => {
+            setIsQuoteLoading(true);
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
+
+            const prompt = `我正在备考雅思，目前连续打卡 ${streak} 天，本周任务完成度 ${progressPercent}%。请根据我的进度，用中文给我写一句一针见血且极其振奋人心的专属鼓励金句（限制30字以内）。必须带1-2个emoji。`;
+            
+            const payload = {
+              contents: [{ parts: [{ text: prompt }] }],
+              systemInstruction: { parts: [{ text: "你是一个充满激情的雅思高分教练，擅长用最简短的话激发学生的斗志。" }] }
+            };
+
+            try {
+              const response = await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+              });
+              const data = await response.json();
+              const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+              if (text) setDailyQuote(text);
+            } catch (error) {
+              console.error(error);
+            }
+            setIsQuoteLoading(false);
+          };
+
+          const Dashboard = () => {
+            const completedCount = Object.values(taskStatus).filter(s => s === 'completed').length;
+            const progressPercent = Math.round((completedCount / TOTAL_TASKS) * 100) || 0;
+            const daysLeft = Math.max(0, Math.ceil((countdownDate - new Date()) / (1000 * 60 * 60 * 24)));
+
+            return (
+              <div className="space-y-6 animate-[fadeIn_0.7s_ease-out]">
+                <header className="mb-8">
+                  <h1 className="text-3xl font-extrabold text-slate-800 drop-shadow-sm">Welcome back!</h1>
+                  <div className="mt-2 flex items-center gap-2">
+                    <p className="text-slate-600 font-medium flex-1">{dailyQuote}</p>
+                    <button 
+                      onClick={() => fetchDailyQuote(progressPercent)} 
+                      disabled={isQuoteLoading}
+                      className="p-1.5 bg-indigo-100 text-indigo-600 rounded-full hover:bg-indigo-200 transition-colors disabled:opacity-50 flex-shrink-0 shadow-sm"
+                      title="获取 AI 专属鼓励"
+                    >
+                      <Sparkles size={16} className={isQuoteLoading ? "animate-spin" : ""} />
+                    </button>
+                  </div>
+                </header>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="bg-white/60 backdrop-blur-xl p-5 rounded-3xl shadow-lg border border-white/40 flex items-center gap-4 transition-transform hover:scale-[1.02]">
+                    <div className={`p-3 rounded-2xl ${streak > 0 ? 'bg-orange-100 shadow-inner' : 'bg-slate-100'}`}>
+                      <Flame size={28} className={streak > 0 ? 'text-orange-500 fill-orange-500 drop-shadow-md' : 'text-slate-400'} />
+                    </div>
+                    <div>
+                      <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-0.5">连胜纪录</p>
+                      <div className="flex items-baseline gap-1">
+                        <span className="text-2xl font-black text-slate-800">{streak}</span>
+                        <span className="text-sm font-semibold text-slate-500">Days</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="bg-white/60 backdrop-blur-xl p-5 rounded-3xl shadow-lg border border-white/40 flex items-center gap-4 transition-transform hover:scale-[1.02]">
+                    <div className="p-3 rounded-2xl bg-indigo-100 shadow-inner">
+                      <Clock size={28} className="text-indigo-500" />
+                    </div>
+                    <div>
+                      <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-0.5">屠鸭倒数</p>
+                      <div className="flex items-baseline gap-1">
+                        <span className="text-2xl font-black text-indigo-600">{daysLeft}</span>
+                        <span className="text-sm font-semibold text-slate-500">Days</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="relative overflow-hidden bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 p-8 rounded-[2.5rem] text-white shadow-2xl mt-6">
+                  <div className="absolute top-0 right-0 w-64 h-64 bg-white opacity-10 rounded-full blur-3xl transform translate-x-1/3 -translate-y-1/3"></div>
+                  <div className="absolute bottom-0 left-0 w-40 h-40 bg-black opacity-10 rounded-full blur-2xl transform -translate-x-1/4 translate-y-1/4"></div>
+                  
+                  <div className="relative z-10 flex flex-col items-center">
+                    <h2 className="text-lg font-semibold opacity-90 mb-6 tracking-wide">本周总体进度</h2>
+                    
+                    <div className="relative w-48 h-48 flex items-center justify-center">
+                      <svg className="w-full h-full transform -rotate-90" viewBox="0 0 100 100">
+                        <circle cx="50" cy="50" r="40" stroke="currentColor" strokeWidth="8" fill="transparent" className="text-white/20" />
+                        <circle 
+                          cx="50" cy="50" r="40" stroke="currentColor" strokeWidth="8" fill="transparent" 
+                          className="text-white drop-shadow-[0_0_8px_rgba(255,255,255,0.6)] transition-all duration-1000 ease-out"
+                          strokeDasharray="251.2" 
+                          strokeDashoffset={251.2 - (251.2 * progressPercent) / 100}
+                          strokeLinecap="round"
+                        />
+                      </svg>
+                      <div className="absolute flex flex-col items-center">
+                        <span className="text-5xl font-black tracking-tighter ml-2">
+                          {progressPercent}<span className="text-2xl font-bold opacity-70 ml-1">%</span>
+                        </span>
+                        <span className="text-xs font-medium opacity-80 mt-1">{completedCount} / {TOTAL_TASKS} Tasks</span>
+                      </div>
+                    </div>
+
+                    <p className="mt-8 text-sm font-medium opacity-90 text-center max-w-xs leading-relaxed">
+                      {progressPercent === 100 ? "Amazing! A perfect week! 🎉" : progressPercent > 50 ? "Halfway there, keep the momentum going! 🔥" : "A journey of a thousand miles begins with a single step. Let's start! ✨"}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            );
+          };
+
+          const Planner = () => {
+            const todayDayId = new Date().getDay() || 7;
+
+            return (
+              <div className="space-y-6 pb-24 animate-[fadeIn_0.7s_ease-out]">
+                <header className="mb-6">
+                  <h1 className="text-2xl font-bold text-slate-800">Weekly Plan</h1>
+                  <p className="text-slate-500 text-sm">勾选完成任务，点击✏️记录你的难点心得。</p>
+                </header>
+
+                <div className="space-y-4">
+                  {WEEK_TASKS.map((dayData) => {
+                    const isToday = dayData.dayId === todayDayId;
+                    return (
+                      <div key={dayData.dayId} className={`bg-white/60 backdrop-blur-md rounded-2xl border ${isToday ? 'border-indigo-400 ring-4 ring-indigo-50' : 'border-white/50'} shadow-sm overflow-hidden transition-all duration-300`}>
+                        <div className={`px-5 py-3 border-b border-slate-100 flex justify-between items-center ${isToday ? 'bg-indigo-50/50' : 'bg-slate-50/50'}`}>
+                          <div className="flex items-center gap-2">
+                            <h3 className="font-bold text-slate-700">{dayData.dayName}</h3>
+                            <span className="text-xs font-semibold text-slate-400 uppercase">{dayData.en}</span>
+                          </div>
+                          {isToday && <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-indigo-500 text-white shadow-sm">TODAY</span>}
+                        </div>
+                        
+                        <div className="p-4 space-y-3">
+                          {dayData.tasks.map(task => {
+                            const status = taskStatus[task.id];
+                            const hasNote = notes[task.id] && notes[task.id].trim() !== '';
+
+                            return (
+                              <div key={task.id} className="flex gap-3 group">
+                                <button 
+                                  onClick={() => handleToggleTask(task.id)}
+                                  className={`mt-1 flex-shrink-0 w-6 h-6 rounded-md border-2 flex items-center justify-center transition-all duration-300 
+                                    ${status === 'completed' ? 'bg-indigo-500 border-indigo-500 shadow-md transform scale-105' : 
+                                      status === 'skipped' ? 'bg-rose-500 border-rose-500 shadow-md transform scale-105' : 
+                                      'bg-white border-slate-300 hover:border-indigo-400'}`}
+                                >
+                                  {status === 'completed' && <CheckCircle2 size={16} className="text-white" strokeWidth={3} />}
+                                  {status === 'skipped' && <X size={16} className="text-white" strokeWidth={3} />}
+                                </button>
+                                
+                                <div className="flex-grow">
+                                  <div className={`transition-all duration-300 ${status === 'completed' ? 'opacity-50 line-through' : status === 'skipped' ? 'opacity-50 line-through text-rose-800' : ''}`}>
+                                    <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold mb-1 mr-2 ${task.color}`}>
+                                      {task.type}
+                                    </span>
+                                    <span className={`text-sm font-medium leading-snug ${status === 'skipped' ? 'text-rose-700' : 'text-slate-700'}`}>{task.text}</span>
+                                  </div>
+                                  
+                                  <div className="mt-2 flex items-start gap-2">
+                                    <button 
+                                      onClick={() => { setNoteModal({ isOpen: true, taskId: task.id, text: notes[task.id] || '', taskType: task.type }); setAiResponse(''); }}
+                                      className={`text-xs font-medium flex items-center gap-1 transition-colors ${hasNote ? 'text-indigo-600 hover:text-indigo-800' : 'text-slate-400 hover:text-indigo-500 opacity-0 group-hover:opacity-100'}`}
+                                    >
+                                      <Edit3 size={12} /> {hasNote ? '查看/编辑笔记' : '添加学习难点...'}
+                                    </button>
+                                  </div>
+                                  {hasNote && (
+                                    <div className="mt-1 p-2 bg-yellow-50/80 border border-yellow-100 rounded-lg text-xs text-slate-600 italic">
+                                      "{notes[task.id]}"
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+
+                          <div className="mt-4 pt-3 border-t border-slate-100/80">
+                            <p className="text-xs font-bold text-slate-400 uppercase mb-2 flex items-center gap-1">
+                              <Sparkles size={12} className="text-indigo-400"/> 额外完成 / 补充说明
+                            </p>
+                            <textarea 
+                              className="w-full bg-white/50 border border-slate-200 rounded-lg p-2.5 text-sm text-slate-700 focus:ring-1 focus:ring-indigo-400 outline-none resize-none transition-shadow"
+                              rows="2"
+                              placeholder="今天有额外完成的任务吗？(例如：额外背了20个单词...)"
+                              value={extraTasks[dayData.dayId] || ''}
+                              onChange={(e) => handleExtraTaskChange(dayData.dayId, e.target.value)}
+                              onBlur={handleExtraTaskBlur}
+                            ></textarea>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          };
+
+          const Sketchpad = () => {
+            const canvasRef = useRef(null);
+            const [isDrawing, setIsDrawing] = useState(false);
+            const [ctx, setCtx] = useState(null);
+
+            useEffect(() => {
+              const canvas = canvasRef.current;
+              if (canvas) {
+                const dpr = window.devicePixelRatio || 1;
+                const rect = canvas.parentElement.getBoundingClientRect();
+                canvas.width = rect.width * dpr;
+                canvas.height = 400 * dpr;
+                
+                const context = canvas.getContext('2d');
+                context.scale(dpr, dpr);
+                context.lineCap = 'round';
+                context.strokeStyle = '#4f46e5'; 
+                context.lineWidth = 3;
+                
+                context.fillStyle = '#ffffff';
+                context.fillRect(0, 0, canvas.width, canvas.height);
+                
+                setCtx(context);
+              }
+            }, [activeTab]); 
+
+            const startDrawing = (e) => {
+              if (!ctx) return;
+              const { offsetX, offsetY } = getCoordinates(e);
+              ctx.beginPath();
+              ctx.moveTo(offsetX, offsetY);
+              setIsDrawing(true);
+            };
+
+            const draw = (e) => {
+              if (!isDrawing || !ctx) return;
+              e.preventDefault(); 
+              const { offsetX, offsetY } = getCoordinates(e);
+              ctx.lineTo(offsetX, offsetY);
+              ctx.stroke();
+            };
+
+            const stopDrawing = () => {
+              if (!ctx) return;
+              ctx.closePath();
+              setIsDrawing(false);
+            };
+
+            const getCoordinates = (e) => {
+              const canvas = canvasRef.current;
+              const rect = canvas.getBoundingClientRect();
+              if (e.touches && e.touches.length > 0) {
+                return {
+                  offsetX: e.touches[0].clientX - rect.left,
+                  offsetY: e.touches[0].clientY - rect.top
+                };
+              }
+              return { offsetX: e.nativeEvent.offsetX, offsetY: e.nativeEvent.offsetY };
+            };
+
+            const clearCanvas = () => {
+              if (!ctx || !canvasRef.current) return;
+              ctx.fillStyle = '#ffffff';
+              ctx.fillRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+            };
+
+            const exportCanvas = () => {
+              if (!canvasRef.current) return;
+              const dataUrl = canvasRef.current.toDataURL('image/png');
+              const link = document.createElement('a');
+              link.download = 'ielts-zen-sketch.png';
+              link.href = dataUrl;
+              link.click();
+            };
+
+            return (
+              <div className="space-y-4 animate-[fadeIn_0.7s_ease-out]">
+                <header>
+                  <h1 className="text-2xl font-bold text-slate-800">Zen Canvas</h1>
+                  <p className="text-slate-500 text-sm">在这里手绘小作文趋势图，或默写难点单词。</p>
+                </header>
+
+                <div className="bg-white p-2 rounded-2xl shadow-xl border border-slate-100 overflow-hidden touch-none relative">
+                  <canvas
+                    ref={canvasRef}
+                    className="w-full h-[400px] cursor-crosshair rounded-xl border border-dashed border-slate-200"
+                    onMouseDown={startDrawing}
+                    onMouseMove={draw}
+                    onMouseUp={stopDrawing}
+                    onMouseLeave={stopDrawing}
+                    onTouchStart={startDrawing}
+                    onTouchMove={draw}
+                    onTouchEnd={stopDrawing}
+                  />
+                  <div className="absolute bottom-6 right-6 flex gap-2">
+                    <button onClick={clearCanvas} className="p-3 bg-white/90 backdrop-blur rounded-full shadow-lg text-rose-500 hover:bg-rose-50 transition-colors">
+                      <Trash2 size={20} />
+                    </button>
+                    <button onClick={exportCanvas} className="p-3 bg-indigo-600 rounded-full shadow-lg text-white hover:bg-indigo-700 transition-colors">
+                      <Save size={20} />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            );
+          };
+
+          if (loading) {
+            return (
+              <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+                <div className="animate-spin rounded-full h-12 w-12 border-4 border-indigo-200 border-t-indigo-600"></div>
+              </div>
+            );
+          }
+
+          return (
+            <div className="min-h-screen font-sans text-slate-900 pb-20 selection:bg-indigo-200 relative overflow-hidden">
+              <style>{`
+                @keyframes blob {
+                  0% { transform: translate(0px, 0px) scale(1); }
+                  33% { transform: translate(30px, -50px) scale(1.1); }
+                  66% { transform: translate(-20px, 20px) scale(0.9); }
+                  100% { transform: translate(0px, 0px) scale(1); }
+                }
+                @keyframes fadeIn {
+                  from { opacity: 0; transform: translateY(10px); }
+                  to { opacity: 1; transform: translateY(0); }
+                }
+                .animate-blob { animation: blob 7s infinite; }
+                .animation-delay-2000 { animation-delay: 2s; }
+                .animation-delay-4000 { animation-delay: 4s; }
+              `}</style>
+              
+              <div className="fixed inset-0 pointer-events-none z-0">
+                <div className="absolute top-[-10%] left-[-10%] w-[50%] h-[50%] bg-purple-300 rounded-full mix-blend-multiply filter blur-[100px] opacity-40 animate-blob"></div>
+                <div className="absolute top-[20%] right-[-10%] w-[40%] h-[40%] bg-indigo-300 rounded-full mix-blend-multiply filter blur-[100px] opacity-40 animate-blob animation-delay-2000"></div>
+                <div className="absolute bottom-[-20%] left-[20%] w-[60%] h-[60%] bg-pink-200 rounded-full mix-blend-multiply filter blur-[120px] opacity-40 animate-blob animation-delay-4000"></div>
+              </div>
+
+              <div className="max-w-md mx-auto relative z-10 px-5 pt-8 min-h-screen flex flex-col">
+                {activeTab === 'dashboard' && <Dashboard />}
+                {activeTab === 'planner' && <Planner />}
+                {activeTab === 'canvas' && <Sketchpad />}
+              </div>
+
+              <nav className="fixed bottom-6 left-1/2 transform -translate-x-1/2 bg-white/70 backdrop-blur-xl border border-white/50 px-6 py-4 rounded-full shadow-[0_8px_30px_rgb(0,0,0,0.08)] z-50 flex gap-8">
+                <button onClick={() => setActiveTab('dashboard')} className={`flex flex-col items-center gap-1 transition-colors ${activeTab === 'dashboard' ? 'text-indigo-600' : 'text-slate-400 hover:text-slate-600'}`}>
+                  <LayoutDashboard size={24} className={activeTab === 'dashboard' ? 'fill-indigo-100' : ''} />
+                </button>
+                <button onClick={() => setActiveTab('planner')} className={`flex flex-col items-center gap-1 transition-colors ${activeTab === 'planner' ? 'text-indigo-600' : 'text-slate-400 hover:text-slate-600'}`}>
+                  <CalendarCheck size={24} className={activeTab === 'planner' ? 'fill-indigo-100' : ''} />
+                </button>
+                <button onClick={() => setActiveTab('canvas')} className={`flex flex-col items-center gap-1 transition-colors ${activeTab === 'canvas' ? 'text-indigo-600' : 'text-slate-400 hover:text-slate-600'}`}>
+                  <Edit3 size={24} className={activeTab === 'canvas' ? 'fill-indigo-100' : ''} />
+                </button>
+              </nav>
+
+              {noteModal.isOpen && (
+                <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[100] flex items-center justify-center p-4 animate-[fadeIn_0.3s_ease-out]">
+                  <div className="bg-white w-full max-w-sm rounded-[2rem] shadow-2xl overflow-hidden">
+                    <div className="p-6">
+                      <div className="flex justify-between items-center mb-4">
+                        <h3 className="text-lg font-bold text-slate-800">学习笔记 & 难点</h3>
+                        <button onClick={() => { setNoteModal({ isOpen: false, taskId: null, text: '', taskType: '' }); setAiResponse(''); }} className="p-2 bg-slate-100 rounded-full text-slate-500 hover:bg-slate-200 transition-colors">
+                          <X size={18} />
+                        </button>
+                      </div>
+                      <textarea
+                        autoFocus
+                        value={noteModal.text}
+                        onChange={(e) => setNoteModal({ ...noteModal, text: e.target.value })}
+                        placeholder="例如：今天听力 Section 3 的匹配题错太多了，同义替换没反应过来..."
+                        className="w-full h-32 p-4 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none resize-none text-sm text-slate-700 placeholder-slate-400 transition-all"
+                      />
+                      
+                      <div className="flex justify-start mt-3 mb-2">
+                        <button
+                          onClick={() => fetchGeminiAdvice(noteModal.text, noteModal.taskType)}
+                          disabled={isAiLoading || !noteModal.text.trim()}
+                          className="text-xs flex items-center gap-1.5 px-3 py-2 bg-purple-100 text-purple-700 font-semibold rounded-lg hover:bg-purple-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          {isAiLoading ? <span className="animate-spin text-sm">⏳</span> : <Sparkles size={14} />}
+                          {isAiLoading ? 'AI 导师正在为你思考...' : 
+                           noteModal.taskType === '词汇' ? '✨ AI 生成高分例句' : 
+                           noteModal.taskType === '写作' ? '✨ AI 拓展写作思路' : '✨ 获取 AI 导师建议'}
+                        </button>
+                      </div>
+
+                      {aiResponse && (
+                        <div className="mb-4 p-3 bg-indigo-50 border border-indigo-100 rounded-xl text-sm text-indigo-800 leading-relaxed animate-[fadeIn_0.3s_ease-out]">
+                          <span className="font-bold flex items-center gap-1 mb-1 text-indigo-900">
+                            <Sparkles size={14} className="text-indigo-600"/> 雅思名师点拨：
+                          </span>
+                          {aiResponse}
+                        </div>
+                      )}
+
+                      <button onClick={saveNote} className="w-full py-3 bg-indigo-600 text-white font-semibold rounded-xl hover:bg-indigo-700 shadow-md transition-colors flex justify-center items-center gap-2">
+                        <Save size={18} /> 保存笔记
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        }
+
+        const root = createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
