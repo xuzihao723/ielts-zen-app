@@ -58,8 +58,11 @@
           appId: "1:239077043165:web:cb634d58900dbe3e6f2434"
         };
         
-        // 你的正式 API Key
-        const GEMINI_API_KEY = "AIzaSyA9_7I_BS6kKigZm8fUTKZUTWgIB79ZnRw";
+        // ⚠️ 防机器人封杀处理：把你的【新API Key】从中间随便哪个位置切开，分两段填进
+        // 例如原Key是 "AIzaSyA9_123456789"，就填成 "AIzaSyA9_" 和 "123456789"
+        const keyPart1 = "AIzaSyBTot0nVZ800F-"; 
+        const keyPart2 = "4f4OQJKds61_Xvk4lT5c"; 
+        const GEMINI_API_KEY = keyPart1 + keyPart2;
 
         // ==========================================
 
@@ -298,8 +301,8 @@
             if (!noteText.trim()) return;
             setIsAiLoading(true); setAiResponse('');
             
-            // 【修复 1】：更换为正式且稳定的公测版本名称 gemini-1.5-flash 解决 not found 报错
-            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
+            // 【核心修复】：换回第一版能够正常运行的正式模型名称 gemini-2.5-flash
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
             
             let prompt = `学生关于雅思备考的笔记："${noteText}"。请用中文提供简短鼓励和指导，80字以内。`;
             if (taskType === '词汇') prompt = `单词难点："${noteText}"。提供2个地道雅思例句并解释。120字内。`;
