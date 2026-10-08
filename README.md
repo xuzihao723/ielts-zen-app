@@ -1,103 +1,202 @@
-🚀 雅思禅 | IELTS Zen Ultra
+<a id="readme-top"></a>
 
-雅思禅 (IELTS Zen) 是一款专为雅思考生（“烤鸭”）打造的沉浸式高级备考 Web 应用。它不仅提供科学的 7 天冲刺计划，还深度集成了 Gemini AI 导师、番茄专注时钟、手写涂鸦板以及无感云端同步功能。通过极具高级感的玻璃拟态 UI 和沉浸式体验，帮助你在冲考阶段保持绝对的专注与高效。
+<div align="center">
 
-✨ 核心功能 (Features)
+# IELTS Zen · 雅思禅
 
-📊 全维度数据仪表盘 (Dashboard)
+**Plan your week. Focus on today. Keep learning.**
 
-打卡连胜 (Streak) 记录与考试倒计时追踪（默认指向 2026-04-10）。
+A calm IELTS study companion with a weekly planner, learning notes, a focus timer and a sketchpad.
 
-带有动态动画的每周总体进度可视化环形图。
+**English** · [简体中文](README.zh-CN.md)
 
-首页每日刷新 Gemini AI 生成的专属振奋金句。
+[![Checks](https://github.com/xuzihao723/ielts-zen-app/actions/workflows/check.yml/badge.svg)](https://github.com/xuzihao723/ielts-zen-app/actions/workflows/check.yml)
+[![React 18](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=white)](https://react.dev/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-6366F1.svg)](LICENSE)
 
-📅 智能周计划 & AI 导师 (Planner & AI Tutor)
+[View hosted app](https://xuzihao723.github.io/ielts-zen-app/) · [Report a bug](https://github.com/xuzihao723/ielts-zen-app/issues/new) · [Request a feature](https://github.com/xuzihao723/ielts-zen-app/issues/new)
 
-7 天科学备考日程：覆盖听、说、读、写全方位的任务安排。
+</div>
 
-三态打卡系统：支持标记任务为“完成 ✅”、“跳过 ❌”或“待办”。
+> The hosted app reflects the version deployed on `main`. Pull request changes appear after merging and deployment. The app interface is primarily Chinese; the documentation is bilingual.
 
-每日复盘与心情日历：使用 Emoji 记录当天备考心情，补充额外完成的任务。
+<details>
+<summary>Contents</summary>
 
-🤖 AI 难点解析：记录学习难点时，可一键召唤 Gemini AI 导师，自动生成“地道雅思高分例句”或“写作拓展思路”。
+- [About](#about)
+- [Features](#features)
+- [Quick start](#quick-start)
+- [Configuration](#configuration)
+- [Usage](#usage)
+- [Deployment](#deployment)
+- [Architecture](#architecture)
+- [Checks](#checks)
+- [Limitations and roadmap](#limitations-and-roadmap)
+- [Contributing](#contributing)
+- [License and contact](#license-and-contact)
 
-🍅 沉浸式专注时钟 (Zen Timer)
+</details>
 
-内置经典的 25 分钟专注 / 5 分钟休息的番茄钟循环。
+## About
 
-环境白噪音：提供“雨声 🌧️”、“咖啡馆 ☕️”、“白噪音 🌊”三种高质量环境音，一键进入心流状态。
+IELTS Zen brings study tasks, notes and focus tools into a compact, mobile-friendly workspace. Its seven-day plan covers vocabulary, listening, reading, writing, speaking and review. Start without credentials: learning progress is stored in your browser. Firebase storage and an AI tutor are optional additions.
 
-🎨 自由手绘板 (Zen Canvas)
+This is a study organizer, not an official IELTS service or an automated band-score assessment tool.
 
-提供超大画布（支持设备触控与 Apple Pencil）。
+![IELTS Zen dashboard](docs/images/dashboard.jpg)
 
-适合临摹小作文趋势图、打草稿或默写生僻单词，支持一键下载导出。
+<details>
+<summary>See the weekly planner</summary>
 
-🌙 极致暗黑模式 (Dark Mode)
+![Weekly planner with task notes and daily reflections](docs/images/planner.jpg)
 
-支持亮色/暗色主题一键丝滑切换。
+</details>
 
-底层采用高级动态流体背景（Blob Animation）与玻璃拟态（Glassmorphism）设计，深夜备考同样舒适护眼。
+## Features
 
-☁️ 多端无感云同步 (Cloud Sync)
+| Tool | What you can do |
+| --- | --- |
+| Dashboard | Track weekly completion, recorded study streak and your own exam date. |
+| Weekly planner | Cycle tasks through pending → completed → skipped → pending. |
+| Notes and reflection | Save learning difficulties, daily moods and additional study notes. |
+| Focus timer | Start, pause and reset 25-minute focus or 5-minute break sessions. Deadline-based timing catches up after background-tab throttling. |
+| Ambient sound | Select rain, café or white noise when external audio is reachable. |
+| Sketchpad | Draw with mouse or touch, clear the canvas and download a PNG. Drawings survive tab and theme changes during the current page session. |
+| Local persistence | Keep progress, theme and exam date across reloads; export current progress and local weekly archives as JSON. |
+| Optional Firebase | Store progress under a browser's anonymous user ID and archive previous weeks atomically in Firestore. |
+| Optional AI tutor | Request Chinese vocabulary examples, writing ideas or study advice through your own server endpoint. |
 
-基于 Firebase 匿名登录架构，无需繁琐注册即可在多设备间同步数据。
+## Quick start
 
-自动归档引擎：每周一自动重置打卡状态，并将历史数据静默打包至云端 Archives，进度永不丢失。
+### Prerequisites
 
-🛠️ 技术栈 (Tech Stack)
+- Git and a modern browser supporting JavaScript modules and import maps.
+- Python 3 for static hosting, or Node.js 22+ for the optional server and checks.
+- Internet access for library CDNs. Local mode needs no cloud credentials but is not fully offline.
 
-前端框架: React 18 (无需构建工具，通过 Babel 实时编译)
+### Static app
 
-样式体系: Tailwind CSS (利用 Utility-first 类名构建玻璃拟态与响应式布局)
+```sh
+git clone https://github.com/xuzihao723/ielts-zen-app.git
+cd ielts-zen-app
+python -m http.server 8080 --bind 127.0.0.1
+```
 
-后端服务 & 数据库: Firebase Authentication (匿名登录) + Firestore (实时数据库)
+Open [http://127.0.0.1:8080](http://127.0.0.1:8080). No npm installation, Firebase setup or API key is needed for the study tools. Serve over HTTP rather than opening `index.html` with `file://`.
 
-AI 接口: Google Generative AI (Gemini 2.5 Flash / 1.5 Flash API)
+### Optional Node server
 
-图标库: Lucide React
+```sh
+npm start
+```
 
-🚀 快速上手与配置 (Quick Start)
+It serves the same address using Node's built-in modules. npm dependencies are only needed for development checks.
 
-本项目采用免构建架构，克隆即可直接在浏览器或 GitHub Pages 中运行。
+## Configuration
 
-1. 配置 Firebase
+Public settings live in [config.js](config.js):
 
-前往 Firebase 控制台 创建一个新项目。
+```js
+window.IELTS_ZEN_CONFIG = {
+  firebase: null,
+  aiEndpoint: '',
+};
+```
 
-启用 Authentication 中的 匿名登录 (Anonymous)。
+Leave the defaults to use local mode. Reload after changing configuration. Never place Gemini credentials in browser files.
 
-创建 Firestore Database，并将安全规则修改为仅允许已认证用户读写。
+### Optional Firebase storage
 
-获取你的 Firebase Config，并替换 index.html 中的相应部分。
+1. Create your own project in the [Firebase console](https://console.firebase.google.com/), register a web app and copy its web configuration.
+2. Enable [Anonymous authentication](https://firebase.google.com/docs/auth/web/anonymous-auth) and create a Firestore database.
+3. Publish [firestore.rules](firestore.rules) in the Firestore Rules tab. Access must require `request.auth.uid == userId`; allowing every signed-in user to access all user documents is insufficient.
+4. Replace `firebase: null` with your web configuration. Add your hosting domain to Authentication's authorized domains if required by your setup.
 
-2. 配置 Gemini API Key
+```js
+firebase: {
+  apiKey: 'YOUR_FIREBASE_WEB_API_KEY',
+  authDomain: 'YOUR_PROJECT.firebaseapp.com',
+  projectId: 'YOUR_PROJECT',
+  appId: 'YOUR_FIREBASE_APP_ID',
+},
+```
 
-前往 Google AI Studio 申请一个免费的 API Key。
+Firebase web configuration identifies a public client project; authentication and rules protect the database. See [Firebase's API key guidance](https://firebase.google.com/docs/projects/api-keys).
 
-⚠️ 安全警告：由于本项目部署在纯前端，直接暴露 API Key 容易被 GitHub 安全扫描封禁。请使用“字符串拼接截断法”填入你的 Key：
+**Anonymous login does not provide cross-device identity.** Another browser/device gets a different user ID. Clearing site data may lose access to an anonymous account. Export a backup first; account linking is on the roadmap.
 
-// 在代码中找到这段并填入你自己的 Key 的两半
-const keyPart1 = "AIzaSyB..."; // 你的 Key 的前半段
-const keyPart2 = "...xyz123";  // 你的 Key 的后半段
-const GEMINI_API_KEY = keyPart1 + keyPart2;
+Progress is saved locally first. On connection, the newer `updatedAt` document wins as a whole; field-by-field collaborative merging is not supported. Failed writes keep local data; reload to retry reconciliation. Weekly archival happens when the app observes a new local Monday, rather than through a scheduled background job.
 
+### Optional AI tutor for local use
 
-(注：建议在 Google Cloud 中为该 API Key 开启“HTTP 引荐来源网址”限制，仅允许你的 GitHub Pages 域名调用。)
+1. Copy [.env.example](.env.example) to `.env` and set your own `GEMINI_API_KEY`. The ignored file is read only by the Node server.
+2. Choose an available model using `GEMINI_MODEL`; the default is `gemini-2.5-flash`. Check [model availability](https://ai.google.dev/gemini-api/docs/models) for your account.
+3. Set `aiEndpoint: '/api/advice'` in `config.js`, then run `npm start`.
 
-3. 部署
+The browser sends `{ "note": "…", "taskType": "词汇" }` and expects `{ "text": "…" }`. Failures return `{ "error": "…" }` with a non-2xx status. Notes are sent to your endpoint and Google only when you click the AI button. The proxy limits note length and valid requests to five per minute, times out after 30 seconds and never returns the key to the browser.
 
-将包含配置信息的 index.html 直接推送到 GitHub 仓库。
+The included server binds to `127.0.0.1` for personal local use. A public AI service needs a separately authenticated HTTPS backend, quotas, abuse controls and appropriate CORS. GitHub Pages cannot run Node or hold secrets. Splitting a key or injecting it into a frontend build does not protect it. Follow [Google's key security guidance](https://ai.google.dev/gemini-api/docs/api-key).
 
-在仓库设置中开启 GitHub Pages (Source: main branch)。
+## Usage
 
-等待 1-2 分钟，即可通过生成的 https://<your-username>.github.io/<repo-name> 网址访问你的专属备考应用！
+1. Set your exam date on the dashboard. Unset dates show `—`; past dates show zero days remaining.
+2. Click a task box in the planner to change its status. Only completed tasks count toward progress.
+3. Add a difficulty note and save. A configured AI tutor can offer suggestions before saving.
+4. Expand a daily reflection panel to select a mood and write extra notes. Extra notes save locally as you type and sync on blur.
+5. Choose focus or break mode and start the timer. Sessions stop at zero; switching modes resets the timer. Breaks do not start automatically.
+6. Export a sketch as PNG before closing the page. Use **导出备份** in the status bar to download a JSON learning backup.
 
-💡 界面展示
+## Deployment
 
-https://xuzihao723.github.io/ielts-zen-app/
+Publish `index.html`, `config.js` and `zen-core.js` together for static hosting.
 
-📄 许可证
+For [GitHub Pages](https://docs.github.com/en/pages/getting-started-with-github-pages/configuring-a-publishing-source-for-your-github-pages-site), push reviewed changes and choose **Settings → Pages → Deploy from a branch → main → /(root)**. Default settings enable local mode. Firebase requires your own project and rules; AI requires a separately hosted backend URL. `/api/advice` alone cannot work on Pages.
 
-MIT License.
+JSX compilation and Tailwind styling currently run in the browser through CDNs. A bundled production build is on the roadmap.
+
+## Architecture
+
+| File | Responsibility |
+| --- | --- |
+| [index.html](index.html) | React 18 UI, Tailwind, import map and optional Firebase integration. |
+| [zen-core.js](zen-core.js) | Local calendar dates, weekly rollover, streaks and deadline calculations. |
+| [config.js](config.js) | Public cloud and AI endpoint configuration. |
+| [server.mjs](server.mjs) | Optional local static server and server-side Gemini proxy. |
+| [firestore.rules](firestore.rules) | Per-user database authorization. |
+| [tests/core.test.mjs](tests/core.test.mjs) / [tests/server.test.mjs](tests/server.test.mjs) | Calendar, archive, timer and proxy regression tests. |
+
+Cloud paths: `users/{uid}/learningData/progress` and `users/{uid}/archives/{weekId}`. Local keys: `ielts-zen-progress-v1`, `ielts-zen-archives`, `ielts-zen-dark`, `ielts-zen-exam`.
+
+## Checks
+
+```sh
+npm ci
+npm run check
+npm test
+```
+
+Checks compile embedded JSX, validate local README links and reject legacy browser key configuration. Tests cover calendar boundaries, archival, streaks, countdowns, background timing, static file restrictions, proxy validation, provider failures and request limits. CI runs tests in Shanghai and New York time zones.
+
+Also verify typing without losing focus, reload persistence, task cycling, timer pause/reset, sketch retention, theme switching and mobile layout for UI changes. Live Firebase/Gemini calls require your own services; tests use a fake provider and do not validate external credentials.
+
+## Limitations and roadmap
+
+- Browser data is tied to the site's origin. Backup export is available; import and archive browsing in the UI are not yet implemented.
+- Sketches are session-only and are not cloud-synced. The recorded streak updates on task completion; it is not an activity history calendar.
+- External CDN/audio availability and storage permissions affect functionality.
+- [ ] Link anonymous accounts to permanent sign-in for cross-device access.
+- [ ] Add archive viewing and backup import.
+- [ ] Add an English app interface and editable study plans.
+- [ ] Introduce a bundled production build and broader automated UI coverage.
+
+## Contributing
+
+Use [Issues](https://github.com/xuzihao723/ielts-zen-app/issues) for reproducible bugs or focused proposals. Fork, create a feature branch, run the checks and open a pull request with a description and UI screenshots where relevant. Keep both README languages consistent; exclude credentials and personal notes.
+
+See [SECURITY.md](SECURITY.md) for private vulnerability reporting.
+
+## License and contact
+
+Distributed under the [MIT License](LICENSE). Maintained by [xuzihao723](https://github.com/xuzihao723).
+
+[Back to top ↑](#readme-top)

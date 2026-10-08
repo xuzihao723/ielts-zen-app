@@ -1,44 +1,28 @@
-Security Policy (安全策略)
+# Security policy · 安全策略
 
-Supported Versions (支持的版本)
+Security fixes target the latest `main` version. Older commits are unsupported.
 
-The IELTS Zen App is currently a single-page application. We only provide security updates and patches for the latest deployed version.
+## Credentials and data
 
-Version
+- Never commit Gemini API keys or embed them in browser code. Splitting strings, Base64 encoding or frontend environment variables do not hide a credential.
+- Use your own key in the ignored `.env` file for the optional local Node server. Public AI deployment requires a separately secured, authenticated backend.
+- Earlier versions contained a Gemini credential. Repository history may retain it; its owner must revoke/rotate it and review provider usage. Removing it from current files is insufficient.
+- Firebase web configuration identifies a public client project. Publish per-user Firestore rules; anonymous authentication alone does not isolate users.
+- Anonymous accounts are specific to a browser profile. Clearing site data can lose account access. Learning data and JSON exports contain personal notes; keep backups private.
+- External CDNs load code into the page. This is not a bundled offline application. Review dependency sources before deployment.
 
-Supported
+The AI proxy is loopback-only for personal local development. Its origin checks, body limits and request limit do not replace public-service authentication or quotas.
 
-Latest (main branch)
+## Report a vulnerability
 
-:white_check_mark:
+Do not post keys or private notes in public issues. Use **Security → Report a vulnerability** if private reporting is enabled. Otherwise use a private contact channel listed on the maintainer's GitHub profile. If none is listed, request a private reporting channel without disclosing vulnerability details.
 
-Older commits
+Include the affected commit, reproduction steps without real secrets, expected/actual behavior and likely impact. No fixed response timeline is promised.
 
-:x:
+## 中文说明
 
-API Keys & Secrets (关于 API 密钥的安全提示)
+安全修复仅面向 `main` 的最新版本。Gemini 密钥应保存在服务端，字符串拆分、编码或前端环境变量都不能保护密钥。旧版本已包含公开凭据，仓库历史仍可能保留；所有者需要在供应商控制台撤销或轮换密钥并检查调用记录。
 
-WARNING: This is a frontend-only application.
-If you fork or clone this repository, NEVER commit your real Firebase API Key or Gemini API Key directly into a public repository in plain text. GitHub's automated security scanners will detect leaked API keys and revoke them automatically.
+Firebase 网页配置是公开客户端项目标识。请部署按用户 ID 隔离的 Firestore 规则；仅要求“已登录”不足以保护不同用户的数据。匿名登录不提供跨设备账户，清除浏览器数据可能失去账户访问权。请妥善保管笔记和备份。
 
-Please use string splitting or environment variables if you intend to host your own public instance.
-
-Reporting a Vulnerability (报告漏洞)
-
-If you discover a security vulnerability within this project (such as an exposed API key or database read/write permission issue), please do not disclose it publicly by creating a public issue.
-
-Instead, please report it by:
-
-Reaching out to the repository owner (xuzihao723) privately.
-
-If available, use the GitHub "Private vulnerability reporting" feature in the Security tab.
-
-Please include the following details in your report:
-
-A description of the vulnerability.
-
-Steps to reproduce the issue.
-
-Potential impact.
-
-I will endeavor to respond to your report as soon as possible and take the necessary actions to secure the application.
+本地 AI 代理只适合个人本机使用。公开部署需要独立的认证后端、配额与滥用防护。发现漏洞时优先使用 GitHub 私密漏洞报告；若未开启，使用维护者提供的私密联系方式，或先请求私密报告渠道，不要公开密钥、个人笔记或漏洞详情。

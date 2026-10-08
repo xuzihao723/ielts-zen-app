@@ -4,7 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>雅思禅 | IELTS Zen Ultra</title>
-    
+    <meta name="description" content="A focused IELTS study companion with a weekly planner, notes, timer and sketchpad.">
+
     <!-- 引入 Tailwind CSS 并开启 Class 级别暗黑模式支持 -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
@@ -12,7 +13,7 @@
         darkMode: 'class',
       }
     </script>
-    
+
     <!-- 引入模块映射 (Import Map) -->
     <script type="importmap">
     {
@@ -26,11 +27,13 @@
       }
     }
     </script>
-    
+
     <!-- 引入 Babel 编译器 -->
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone@7.28.5/babel.min.js"></script>
+    <script src="./config.js"></script>
 </head>
 <body class="bg-slate-50 text-slate-800 transition-colors duration-500">
+    <noscript>请开启 JavaScript 以使用 IELTS Zen。</noscript>
     <div id="root"></div>
 
     <script type="text/babel" data-type="module">
@@ -38,37 +41,38 @@
         import { createRoot } from 'react-dom/client';
         import { initializeApp } from 'firebase/app';
         import { getAuth, onAuthStateChanged, signInAnonymously } from 'firebase/auth';
-        import { getFirestore, doc, onSnapshot, setDoc } from 'firebase/firestore';
-        import { 
-          Flame, LayoutDashboard, CalendarCheck, Edit3, 
+        import { getFirestore, doc, onSnapshot, writeBatch } from 'firebase/firestore';
+        import {
+          Flame, LayoutDashboard, CalendarCheck, Edit3,
           X, Save, Trash2, Clock, CheckCircle2, Sparkles,
           Moon, Sun, Timer, Play, Pause, RotateCcw,
           CloudRain, Coffee, Waves, ChevronDown, ChevronUp, Smile
         } from 'lucide-react';
 
+        import { STORAGE_KEY, emptyProgress, rolloverProgress, completionStreak, daysUntil, remainingSeconds } from './zen-core.js';
+
         // ==========================================
         // ⚠️ 部署配置区域
         // ==========================================
-        const firebaseConfig = {
-          apiKey: "AIzaSyDHAmmAdho5X2ZwnUuCPFZkFpfqKuDB2_o",
-          authDomain: "ielts-zen.firebaseapp.com",
-          projectId: "ielts-zen",
-          storageBucket: "ielts-zen.firebasestorage.app",
-          messagingSenderId: "239077043165",
-          appId: "1:239077043165:web:cb634d58900dbe3e6f2434"
-        };
-        
-        // ⚠️ 防机器人封杀处理：把你的【新API Key】从中间随便哪个位置切开，分两段填进
-        // 例如原Key是 "AIzaSyA9_123456789"，就填成 "AIzaSyA9_" 和 "123456789"
-        const keyPart1 = "AIzaSyBTot0nVZ800F-"; 
-        const keyPart2 = "4f4OQJKds61_Xvk4lT5c"; 
-        const GEMINI_API_KEY = keyPart1 + keyPart2;
+        const config = window.IELTS_ZEN_CONFIG || {};
+        let auth = null;
+        let db = null;
+        let configError = '';
+        if (config.firebase) {
+          try {
+            const app = initializeApp(config.firebase);
+            auth = getAuth(app);
+            db = getFirestore(app);
+          } catch {
+            configError = '云端配置无效，已使用本地模式。';
+          }
+        }
 
-        // ==========================================
-
-        const app = initializeApp(firebaseConfig);
-        const auth = getAuth(app);
-        const db = getFirestore(app);
+        function readStored(key, fallback) {
+          try { return JSON.parse(localStorage.getItem(key)) ?? fallback; }
+          catch { return fallback; }
+        }
+        const initialProgress = { ...emptyProgress(), ...readStored(STORAGE_KEY, {}) };
 
         // 静态数据：周计划任务库
         const WEEK_TASKS = [
@@ -105,482 +109,7 @@
         const TOTAL_TASKS = WEEK_TASKS.reduce((acc, curr) => acc + curr.tasks.length, 0);
         const MOOD_EMOJIS = ['🤩', '😊', '😌', '😐', '😫', '🫠', '🤯'];
 
-        const getWeekId = (date = new Date()) => {
-          const d = new Date(date);
-          const day = d.getDay();
-          const diff = d.getDate() - day + (day === 0 ? -6 : 1);
-          const monday = new Date(d.setDate(diff));
-          return monday.toISOString().split('T')[0]; 
-        };
-
-        function App() {
-          // 核心状态
-          const [user, setUser] = useState(null);
-          const [activeTab, setActiveTab] = useState('dashboard');
-          const [isDarkMode, setIsDarkMode] = useState(false);
-          const [loading, setLoading] = useState(true);
-          
-          // 学习数据状态
-          const [taskStatus, setTaskStatus] = useState({}); 
-          const [notes, setNotes] = useState({});
-          const [extraTasks, setExtraTasks] = useState({}); 
-          const [dailyMoods, setDailyMoods] = useState({}); 
-          const [expandedDays, setExpandedDays] = useState({}); 
-          const [streak, setStreak] = useState(0);
-          const [lastActive, setLastActive] = useState(null);
-          
-          // UI 与 AI 交互状态
-          const [noteModal, setNoteModal] = useState({ isOpen: false, taskId: null, text: '', taskType: '' });
-          const [aiResponse, setAiResponse] = useState('');
-          const [isAiLoading, setIsAiLoading] = useState(false);
-
-          // 专注时钟状态
-          const [timeLeft, setTimeLeft] = useState(25 * 60);
-          const [isTimerRunning, setIsTimerRunning] = useState(false);
-          const [timerMode, setTimerMode] = useState('work'); // work, break
-          const [activeSound, setActiveSound] = useState(null);
-          const audioRefs = useRef({});
-
-          const countdownDate = new Date('2026-04-10'); 
-
-          // --- 1. 认证与音频初始化 ---
-          useEffect(() => {
-            const initAuth = async () => {
-              try {
-                await signInAnonymously(auth);
-              } catch (err) {
-                console.error("Auth error:", err);
-                alert("Firebase 登录失败！请检查配置。");
-                setLoading(false);
-              }
-            };
-            initAuth();
-            const unsubscribeAuth = onAuthStateChanged(auth, setUser);
-
-            // 初始化环境音 
-            audioRefs.current = {
-                rain: new Audio('https://cdn.pixabay.com/download/audio/2021/08/04/audio_0625c1539c.mp3?filename=heavy-rain-nature-sounds-8186.mp3'),
-                cafe: new Audio('https://cdn.pixabay.com/download/audio/2022/01/18/audio_d0a13f69d2.mp3?filename=cafe-background-noise-10-minutes-8014.mp3'),
-                noise: new Audio('https://cdn.pixabay.com/download/audio/2022/03/15/audio_8e64593e7d.mp3?filename=white-noise-8117.mp3')
-            };
-            Object.values(audioRefs.current).forEach(audio => { audio.loop = true; audio.volume = 0.4; });
-
-            return () => {
-                unsubscribeAuth();
-                Object.values(audioRefs.current).forEach(audio => { audio.pause(); audio.src = ''; });
-            };
-          }, []);
-
-          // --- 2. 云端数据同步监听 ---
-          useEffect(() => {
-            if (!user) return;
-            const dataRef = doc(db, 'users', user.uid, 'learningData', 'progress');
-            const unsubscribeData = onSnapshot(dataRef, async (docSnap) => {
-              if (docSnap.exists()) {
-                const data = docSnap.data();
-                const currentWeekId = getWeekId();
-                
-                if (data.weekId && data.weekId !== currentWeekId && new Date(currentWeekId) > new Date(data.weekId)) {
-                   const archiveRef = doc(db, 'users', user.uid, 'archives', data.weekId);
-                   await setDoc(archiveRef, {
-                     taskStatus: data.taskStatus || {},
-                     notes: data.notes || {},
-                     extraTasks: data.extraTasks || {},
-                     dailyMoods: data.dailyMoods || {},
-                     archivedAt: new Date().toISOString()
-                   });
-                   
-                   const resetData = { taskStatus: {}, notes: {}, extraTasks: {}, dailyMoods: {}, weekId: currentWeekId };
-                   setTaskStatus({}); setNotes({}); setExtraTasks({}); setDailyMoods({});
-                   await setDoc(dataRef, resetData, { merge: true });
-                } else {
-                   setTaskStatus(data.taskStatus || {});
-                   setNotes(data.notes || {});
-                   setExtraTasks(data.extraTasks || {});
-                   setDailyMoods(data.dailyMoods || {}); 
-                   setStreak(data.streak || 0);
-                   setLastActive(data.lastActive || null);
-                   
-                   if (!data.weekId) await setDoc(dataRef, { weekId: currentWeekId }, { merge: true });
-                }
-              }
-              setLoading(false);
-            }, (err) => { console.error(err); setLoading(false); });
-
-            return () => unsubscribeData();
-          }, [user]);
-
-          // --- 3. 专注时钟逻辑 ---
-          useEffect(() => {
-            let interval;
-            if (isTimerRunning && timeLeft > 0) {
-              interval = setInterval(() => setTimeLeft(t => t - 1), 1000);
-            } else if (isTimerRunning && timeLeft === 0) {
-              setIsTimerRunning(false);
-              alert(timerMode === 'work' ? "专注时间结束，休息一下吧！" : "休息结束，开始屠鸭！");
-            }
-            return () => clearInterval(interval);
-          }, [isTimerRunning, timeLeft, timerMode]);
-
-          const formatTime = (seconds) => {
-            const m = Math.floor(seconds / 60).toString().padStart(2, '0');
-            const s = (seconds % 60).toString().padStart(2, '0');
-            return `${m}:${s}`;
-          };
-
-          const switchTimerMode = (mode) => {
-            setTimerMode(mode);
-            setIsTimerRunning(false);
-            setTimeLeft(mode === 'work' ? 25 * 60 : 5 * 60);
-          };
-
-          const toggleSound = (soundType) => {
-            if (activeSound === soundType) {
-              audioRefs.current[soundType].pause();
-              setActiveSound(null);
-            } else {
-              if (activeSound) audioRefs.current[activeSound].pause();
-              audioRefs.current[soundType].play().catch(e => console.log("Audio play blocked by browser."));
-              setActiveSound(soundType);
-            }
-          };
-
-          // --- 4. 核心交互同步逻辑 ---
-          const syncToCloud = async (newData) => {
-            if (!user) return;
-            const dataRef = doc(db, 'users', user.uid, 'learningData', 'progress');
-            await setDoc(dataRef, newData, { merge: true });
-          };
-
-          const handleToggleTask = (taskId) => {
-            const currentStatus = taskStatus[taskId];
-            const newStatus = !currentStatus ? 'completed' : currentStatus === 'completed' ? 'skipped' : null;
-            const newTaskStatus = { ...taskStatus, [taskId]: newStatus };
-            
-            const today = new Date().toDateString();
-            let newStreak = streak;
-            
-            if (newStatus === 'completed' && lastActive !== today) {
-              if (!lastActive) { newStreak = 1; } 
-              else {
-                const diffDays = Math.floor((new Date(today) - new Date(lastActive)) / (1000 * 60 * 60 * 24));
-                if (diffDays === 1) newStreak += 1;
-                else if (diffDays > 1) newStreak = 1; 
-              }
-              setStreak(newStreak); setLastActive(today);
-            }
-
-            setTaskStatus(newTaskStatus);
-            syncToCloud({ taskStatus: newTaskStatus, ...(newStatus === 'completed' ? { streak: newStreak, lastActive: today } : {}) });
-          };
-
-          const handleExtraTaskChange = (dayId, text) => setExtraTasks(prev => ({ ...prev, [dayId]: text }));
-          const handleExtraTaskBlur = () => syncToCloud({ extraTasks });
-
-          const handleMoodChange = (dayId, mood) => {
-            const newMoods = { ...dailyMoods, [dayId]: mood };
-            setDailyMoods(newMoods);
-            syncToCloud({ dailyMoods: newMoods });
-          };
-
-          const toggleDayExpansion = (dayId) => {
-            setExpandedDays(prev => ({ ...prev, [dayId]: !prev[dayId] }));
-          };
-
-          const saveNote = () => {
-            if (!noteModal.taskId) return;
-            const newNotes = { ...notes, [noteModal.taskId]: noteModal.text };
-            setNotes(newNotes);
-            syncToCloud({ notes: newNotes });
-            setNoteModal({ isOpen: false, taskId: null, text: '', taskType: '' });
-            setAiResponse('');
-          };
-
-          // --- 5. ✨ AI 接口调用修复版 ✨ ---
-          const fetchGeminiAdvice = async (noteText, taskType) => {
-            if (!noteText.trim()) return;
-            setIsAiLoading(true); setAiResponse('');
-            
-            // 【核心修复】：换回第一版能够正常运行的正式模型名称 gemini-2.5-flash
-            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
-            
-            let prompt = `学生关于雅思备考的笔记："${noteText}"。请用中文提供简短鼓励和指导，80字以内。`;
-            if (taskType === '词汇') prompt = `单词难点："${noteText}"。提供2个地道雅思例句并解释。120字内。`;
-            else if (taskType === '写作') prompt = `写作难点："${noteText}"。给出2个高级思路或替换词。120字内。`;
-
-            try {
-              const response = await fetch(url, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ 
-                  contents: [{ parts: [{ text: prompt }] }], 
-                  systemInstruction: { parts: [{ text: "专业雅思名师。" }] } 
-                })
-              });
-              const data = await response.json();
-              
-              // 捕获 API 层面的硬报错 (如 Key 无效、配额超限)
-              if (data.error) throw new Error(data.error.message);
-
-              // 【修复 2】：详细判断各种“无返回内容”的原因，避免干巴巴的“忙碌中”
-              if (data.candidates && data.candidates.length > 0) {
-                  const candidate = data.candidates[0];
-                  if (candidate.finishReason === 'SAFETY') {
-                      setAiResponse("⚠️ 生成的内容触发了 Google 安全策略被拦截，请换一种表达方式重试。");
-                  } else {
-                      setAiResponse(candidate.content?.parts?.[0]?.text || "AI 思考完成，但未返回文字。");
-                  }
-              } else if (data.promptFeedback && data.promptFeedback.blockReason) {
-                  setAiResponse(`⚠️ 你的提示词不符合安全规范被拦截 (${data.promptFeedback.blockReason})`);
-              } else {
-                  setAiResponse("网络波动，AI 暂无返回，请稍后再试。");
-              }
-
-            } catch (error) {
-              setAiResponse(`请求失败: ${error.message} (检查网络或稍后刷新重试)`);
-            }
-            setIsAiLoading(false);
-          };
-
-          // --- 6. 视图组件 ---
-          
-          const Dashboard = () => {
-            const completedCount = Object.values(taskStatus).filter(s => s === 'completed').length;
-            const progressPercent = Math.round((completedCount / TOTAL_TASKS) * 100) || 0;
-            const daysLeft = Math.max(0, Math.ceil((countdownDate - new Date()) / (1000 * 60 * 60 * 24)));
-
-            return (
-              <div className="space-y-6 animate-[fadeIn_0.7s_ease-out]">
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="bg-white/60 dark:bg-slate-800/60 backdrop-blur-xl p-5 rounded-3xl shadow-lg border border-white/40 dark:border-slate-700 flex items-center gap-4 transition-transform hover:scale-[1.02]">
-                    <div className={`p-3 rounded-2xl ${streak > 0 ? 'bg-orange-100 dark:bg-orange-900/50' : 'bg-slate-100 dark:bg-slate-700'}`}>
-                      <Flame size={28} className={streak > 0 ? 'text-orange-500 fill-orange-500' : 'text-slate-400'} />
-                    </div>
-                    <div>
-                      <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-0.5">连胜纪录</p>
-                      <div className="flex items-baseline gap-1">
-                        <span className="text-2xl font-black text-slate-800 dark:text-white">{streak}</span>
-                        <span className="text-sm font-semibold text-slate-500 dark:text-slate-400">Days</span>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="bg-white/60 dark:bg-slate-800/60 backdrop-blur-xl p-5 rounded-3xl shadow-lg border border-white/40 dark:border-slate-700 flex items-center gap-4 transition-transform hover:scale-[1.02]">
-                    <div className="p-3 rounded-2xl bg-indigo-100 dark:bg-indigo-900/50">
-                      <Clock size={28} className="text-indigo-500 dark:text-indigo-400" />
-                    </div>
-                    <div>
-                      <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-0.5">屠鸭倒数</p>
-                      <div className="flex items-baseline gap-1">
-                        <span className="text-2xl font-black text-indigo-600 dark:text-indigo-400">{daysLeft}</span>
-                        <span className="text-sm font-semibold text-slate-500 dark:text-slate-400">Days</span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="relative overflow-hidden bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 dark:from-indigo-900 dark:via-purple-900 dark:to-slate-900 p-8 rounded-[2.5rem] text-white shadow-2xl mt-6">
-                  <div className="absolute top-0 right-0 w-64 h-64 bg-white opacity-10 rounded-full blur-3xl transform translate-x-1/3 -translate-y-1/3"></div>
-                  
-                  <div className="relative z-10 flex flex-col items-center">
-                    <h2 className="text-lg font-semibold opacity-90 mb-6 tracking-wide">本周总体进度</h2>
-                    <div className="relative w-48 h-48 flex items-center justify-center">
-                      <svg className="w-full h-full transform -rotate-90" viewBox="0 0 100 100">
-                        <circle cx="50" cy="50" r="40" stroke="currentColor" strokeWidth="8" fill="transparent" className="text-white/20" />
-                        <circle cx="50" cy="50" r="40" stroke="currentColor" strokeWidth="8" fill="transparent" className="text-white drop-shadow-[0_0_8px_rgba(255,255,255,0.6)] transition-all duration-1000 ease-out" strokeDasharray="251.2" strokeDashoffset={251.2 - (251.2 * progressPercent) / 100} strokeLinecap="round" />
-                      </svg>
-                      <div className="absolute flex flex-col items-center">
-                        <span className="text-5xl font-black tracking-tighter ml-2">{progressPercent}<span className="text-2xl font-bold opacity-70 ml-1">%</span></span>
-                        <span className="text-xs font-medium opacity-80 mt-1">{completedCount} / {TOTAL_TASKS} Tasks</span>
-                      </div>
-                    </div>
-                    <p className="mt-8 text-sm font-medium opacity-90 text-center max-w-xs leading-relaxed">
-                      {progressPercent === 100 ? "Amazing! 完美的一周！🎉" : progressPercent > 50 ? "进度过半，稳住节奏！🔥" : "千里之行，始于足下，马上开始！✨"}
-                    </p>
-                  </div>
-                </div>
-              </div>
-            );
-          };
-
-          const FocusTimer = () => {
-            return (
-              <div className="space-y-6 animate-[fadeIn_0.7s_ease-out]">
-                <header className="text-center mb-8">
-                  <h1 className="text-3xl font-extrabold text-slate-800 dark:text-white">Zen Timer</h1>
-                  <p className="text-slate-500 dark:text-slate-400 mt-2 text-sm">沉浸式备考，屏蔽一切干扰。</p>
-                </header>
-
-                {/* 计时器主体 */}
-                <div className="bg-white/60 dark:bg-slate-800/60 backdrop-blur-xl p-8 rounded-[3rem] shadow-2xl border border-white/40 dark:border-slate-700 flex flex-col items-center">
-                  <div className="flex gap-4 mb-8 bg-slate-100/50 dark:bg-slate-900/50 p-1.5 rounded-full">
-                    <button onClick={() => switchTimerMode('work')} className={`px-6 py-2 rounded-full text-sm font-bold transition-all ${timerMode === 'work' ? 'bg-white dark:bg-slate-700 shadow-sm text-indigo-600 dark:text-indigo-400' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700'}`}>
-                      专注 25m
-                    </button>
-                    <button onClick={() => switchTimerMode('break')} className={`px-6 py-2 rounded-full text-sm font-bold transition-all ${timerMode === 'break' ? 'bg-white dark:bg-slate-700 shadow-sm text-emerald-600 dark:text-emerald-400' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700'}`}>
-                      休息 5m
-                    </button>
-                  </div>
-
-                  <div className="text-[5rem] font-black text-slate-800 dark:text-white tracking-tighter tabular-nums mb-8 drop-shadow-sm">
-                    {formatTime(timeLeft)}
-                  </div>
-
-                  <div className="flex gap-6 mb-4">
-                    <button onClick={() => setIsTimerRunning(!isTimerRunning)} className="w-16 h-16 flex items-center justify-center bg-indigo-600 hover:bg-indigo-700 text-white rounded-full shadow-lg shadow-indigo-200 dark:shadow-none transition-transform active:scale-95">
-                      {isTimerRunning ? <Pause size={28} fill="currentColor" /> : <Play size={28} fill="currentColor" className="ml-1" />}
-                    </button>
-                    <button onClick={() => switchTimerMode(timerMode)} className="w-16 h-16 flex items-center justify-center bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-600 dark:text-slate-300 rounded-full transition-transform active:scale-95">
-                      <RotateCcw size={24} />
-                    </button>
-                  </div>
-                </div>
-
-                {/* 环境音控制 */}
-                <div className="grid grid-cols-3 gap-4">
-                  <button onClick={() => toggleSound('rain')} className={`flex flex-col items-center justify-center gap-2 p-5 rounded-3xl border transition-all ${activeSound === 'rain' ? 'bg-blue-50 border-blue-200 text-blue-600 dark:bg-blue-900/40 dark:border-blue-800 dark:text-blue-400 shadow-md' : 'bg-white/60 dark:bg-slate-800/60 border-transparent text-slate-400 dark:text-slate-500 hover:bg-white dark:hover:bg-slate-800'}`}>
-                    <CloudRain size={28} />
-                    <span className="text-xs font-bold">雨声</span>
-                  </button>
-                  <button onClick={() => toggleSound('cafe')} className={`flex flex-col items-center justify-center gap-2 p-5 rounded-3xl border transition-all ${activeSound === 'cafe' ? 'bg-orange-50 border-orange-200 text-orange-600 dark:bg-orange-900/40 dark:border-orange-800 dark:text-orange-400 shadow-md' : 'bg-white/60 dark:bg-slate-800/60 border-transparent text-slate-400 dark:text-slate-500 hover:bg-white dark:hover:bg-slate-800'}`}>
-                    <Coffee size={28} />
-                    <span className="text-xs font-bold">咖啡馆</span>
-                  </button>
-                  <button onClick={() => toggleSound('noise')} className={`flex flex-col items-center justify-center gap-2 p-5 rounded-3xl border transition-all ${activeSound === 'noise' ? 'bg-slate-100 border-slate-300 text-slate-700 dark:bg-slate-700 dark:border-slate-500 dark:text-white shadow-md' : 'bg-white/60 dark:bg-slate-800/60 border-transparent text-slate-400 dark:text-slate-500 hover:bg-white dark:hover:bg-slate-800'}`}>
-                    <Waves size={28} />
-                    <span className="text-xs font-bold">白噪音</span>
-                  </button>
-                </div>
-              </div>
-            );
-          };
-
-          const Planner = () => {
-            const todayDayId = new Date().getDay() || 7;
-
-            return (
-              <div className="space-y-6 pb-24 animate-[fadeIn_0.7s_ease-out]">
-                <header className="mb-6">
-                  <h1 className="text-2xl font-bold text-slate-800 dark:text-white">Weekly Plan</h1>
-                  <p className="text-slate-500 dark:text-slate-400 text-sm">点击方框打卡，点击👇展开复盘面板。</p>
-                </header>
-
-                <div className="space-y-5">
-                  {WEEK_TASKS.map((dayData) => {
-                    const isToday = dayData.dayId === todayDayId;
-                    const isExpanded = expandedDays[dayData.dayId];
-                    const selectedMood = dailyMoods[dayData.dayId];
-
-                    return (
-                      <div key={dayData.dayId} className={`bg-white/60 dark:bg-slate-800/80 backdrop-blur-md rounded-3xl border ${isToday ? 'border-indigo-400 ring-4 ring-indigo-50 dark:ring-indigo-900/30' : 'border-white/50 dark:border-slate-700'} shadow-sm overflow-hidden transition-all duration-300`}>
-                        <div className={`px-5 py-4 border-b border-slate-100 dark:border-slate-700/50 flex justify-between items-center ${isToday ? 'bg-indigo-50/50 dark:bg-indigo-900/20' : 'bg-slate-50/30 dark:bg-slate-800/30'}`}>
-                          <div className="flex items-center gap-2">
-                            <h3 className="font-bold text-slate-700 dark:text-slate-200">{dayData.dayName}</h3>
-                            <span className="text-xs font-semibold text-slate-400 dark:text-slate-500 uppercase">{dayData.en}</span>
-                            {selectedMood && !isExpanded && <span className="ml-2 text-lg">{selectedMood}</span>}
-                          </div>
-                          {isToday && <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-indigo-500 text-white shadow-sm">TODAY</span>}
-                        </div>
-                        
-                        <div className="p-5 space-y-4">
-                          {dayData.tasks.map(task => {
-                            const status = taskStatus[task.id];
-                            const hasNote = notes[task.id] && notes[task.id].trim() !== '';
-
-                            return (
-                              <div key={task.id} className="flex gap-3 group">
-                                <button 
-                                  onClick={() => handleToggleTask(task.id)}
-                                  className={`mt-1 flex-shrink-0 w-6 h-6 rounded-md border-2 flex items-center justify-center transition-all duration-300 
-                                    ${status === 'completed' ? 'bg-indigo-500 border-indigo-500 shadow-md transform scale-105' : 
-                                      status === 'skipped' ? 'bg-rose-500 border-rose-500 shadow-md transform scale-105' : 
-                                      'bg-white dark:bg-slate-700 border-slate-300 dark:border-slate-500 hover:border-indigo-400'}`}
-                                >
-                                  {status === 'completed' && <CheckCircle2 size={16} className="text-white" strokeWidth={3} />}
-                                  {status === 'skipped' && <X size={16} className="text-white" strokeWidth={3} />}
-                                </button>
-                                
-                                <div className="flex-grow">
-                                  <div className={`transition-all duration-300 ${status === 'completed' ? 'opacity-50 line-through dark:opacity-40' : status === 'skipped' ? 'opacity-50 line-through text-rose-800 dark:text-rose-400' : ''}`}>
-                                    <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold mb-1.5 mr-2 ${task.color}`}>
-                                      {task.type}
-                                    </span>
-                                    <span className={`text-sm font-medium leading-snug ${status === 'skipped' ? 'text-rose-700 dark:text-rose-400' : 'text-slate-700 dark:text-slate-300'}`}>{task.text}</span>
-                                  </div>
-                                  
-                                  <div className="mt-1 flex items-start gap-2">
-                                    <button 
-                                      onClick={() => { setNoteModal({ isOpen: true, taskId: task.id, text: notes[task.id] || '', taskType: task.type }); setAiResponse(''); }}
-                                      className={`text-xs font-medium flex items-center gap-1 transition-colors ${hasNote ? 'text-indigo-600 dark:text-indigo-400' : 'text-slate-400 dark:text-slate-500 hover:text-indigo-500 opacity-0 group-hover:opacity-100'}`}
-                                    >
-                                      <Edit3 size={12} /> {hasNote ? '查看难点笔记' : '添加学习难点...'}
-                                    </button>
-                                  </div>
-                                  {hasNote && (
-                                    <div className="mt-2 p-2 bg-yellow-50/80 dark:bg-yellow-900/20 border border-yellow-100 dark:border-yellow-700/50 rounded-lg text-xs text-slate-600 dark:text-slate-400 italic">
-                                      "{notes[task.id]}"
-                                    </div>
-                                  )}
-                                </div>
-                              </div>
-                            );
-                          })}
-
-                          {/* 折叠/展开面板按钮 */}
-                          <div className="pt-2 border-t border-slate-100/80 dark:border-slate-700/50 flex justify-center">
-                            <button 
-                              onClick={() => toggleDayExpansion(dayData.dayId)}
-                              className="text-xs font-bold text-slate-400 hover:text-indigo-500 dark:hover:text-indigo-400 flex items-center gap-1 transition-colors py-1 px-4 rounded-full hover:bg-slate-50 dark:hover:bg-slate-700"
-                            >
-                              {isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />} 
-                              今日复盘 & 心情
-                            </button>
-                          </div>
-
-                          {/* 展开的复盘面板 */}
-                          {isExpanded && (
-                            <div className="mt-2 space-y-4 animate-[fadeIn_0.3s_ease-out]">
-                              <div>
-                                <p className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase mb-2 flex items-center gap-1">
-                                  <Smile size={12} className="text-pink-400"/> 选择今日心情
-                                </p>
-                                <div className="flex gap-2 justify-between px-1">
-                                  {MOOD_EMOJIS.map(emoji => (
-                                    <button 
-                                      key={emoji}
-                                      onClick={() => handleMoodChange(dayData.dayId, emoji)}
-                                      className={`text-xl transition-transform hover:scale-125 ${selectedMood === emoji ? 'scale-125 drop-shadow-md' : 'grayscale opacity-40'}`}
-                                    >
-                                      {emoji}
-                                    </button>
-                                  ))}
-                                </div>
-                              </div>
-                              <div>
-                                <p className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase mb-2 flex items-center gap-1">
-                                  <Edit3 size={12} className="text-indigo-400"/> 额外心得 / 补充任务
-                                </p>
-                                <textarea 
-                                  className="w-full bg-white/50 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-600 rounded-xl p-3 text-sm text-slate-700 dark:text-slate-300 focus:ring-2 focus:ring-indigo-400 outline-none resize-none transition-all placeholder-slate-400 dark:placeholder-slate-500"
-                                  rows="2"
-                                  placeholder="写下今天的备考感悟或额外背的单词吧..."
-                                  value={extraTasks[dayData.dayId] || ''}
-                                  onChange={(e) => handleExtraTaskChange(dayData.dayId, e.target.value)}
-                                  onBlur={handleExtraTaskBlur}
-                                ></textarea>
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            );
-          };
-
-          const Sketchpad = () => {
+          const Sketchpad = ({ isDarkMode }) => {
             const canvasRef = useRef(null);
             const [isDrawing, setIsDrawing] = useState(false);
             const [ctx, setCtx] = useState(null);
@@ -593,21 +122,23 @@
                 canvas.width = rect.width * dpr;
                 // 扩展高度至 550px
                 canvas.height = 550 * dpr;
-                
+
                 const context = canvas.getContext('2d');
                 context.scale(dpr, dpr);
                 context.lineCap = 'round';
                 // 根据暗黑模式切换画笔颜色
-                context.strokeStyle = isDarkMode ? '#a5b4fc' : '#4f46e5'; 
+                context.strokeStyle = isDarkMode ? '#a5b4fc' : '#4f46e5';
                 context.lineWidth = 3;
-                
+
                 // 根据暗黑模式切换背景颜色
                 context.fillStyle = isDarkMode ? '#1e293b' : '#ffffff';
                 context.fillRect(0, 0, canvas.width, canvas.height);
-                
+
                 setCtx(context);
               }
-            }, [activeTab, isDarkMode]); 
+            }, []);
+
+            useEffect(() => { if (ctx) ctx.strokeStyle = isDarkMode ? '#a5b4fc' : '#4f46e5'; }, [ctx, isDarkMode]);
 
             const getCoordinates = (e) => {
               const canvas = canvasRef.current;
@@ -639,10 +170,10 @@
                     onTouchStart={startDrawing} onTouchMove={draw} onTouchEnd={stopDrawing}
                   />
                   <div className="absolute bottom-6 right-6 flex gap-3">
-                    <button onClick={clearCanvas} className="p-4 bg-white/90 dark:bg-slate-700/90 backdrop-blur rounded-2xl shadow-xl text-rose-500 hover:bg-rose-50 dark:hover:bg-slate-600 transition-transform active:scale-95 border border-slate-100 dark:border-slate-600">
+                    <button aria-label="清空画布" onClick={clearCanvas} className="p-4 bg-white/90 dark:bg-slate-700/90 backdrop-blur rounded-2xl shadow-xl text-rose-500 hover:bg-rose-50 dark:hover:bg-slate-600 transition-transform active:scale-95 border border-slate-100 dark:border-slate-600">
                       <Trash2 size={24} />
                     </button>
-                    <button onClick={exportCanvas} className="p-4 bg-indigo-600 rounded-2xl shadow-xl text-white hover:bg-indigo-700 transition-transform active:scale-95">
+                    <button aria-label="下载画布" onClick={exportCanvas} className="p-4 bg-indigo-600 rounded-2xl shadow-xl text-white hover:bg-indigo-700 transition-transform active:scale-95">
                       <Save size={24} />
                     </button>
                   </div>
@@ -651,13 +182,538 @@
             );
           };
 
-          if (loading) {
+
+        function App() {
+          // 核心状态
+          const [user, setUser] = useState(null);
+          const [activeTab, setActiveTab] = useState('dashboard');
+          const [canvasVisited, setCanvasVisited] = useState(false);
+          const [isDarkMode, setIsDarkMode] = useState(() => readStored('ielts-zen-dark', false));
+          const [syncStatus, setSyncStatus] = useState(configError || (auth ? '正在连接云端…' : '本地模式 · 数据保存在此浏览器'));
+          const [storageError, setStorageError] = useState('');
+          const [examDate, setExamDate] = useState(() => readStored('ielts-zen-exam', ''));
+          const progressRef = useRef(initialProgress);
+          const cloudReady = useRef(false);
+          const cloudUser = useRef(null);
+          cloudUser.current = user;
+          const cloudWrites = useRef(Promise.resolve());
+          const pendingArchives = useRef({});
+          const rolloverInFlight = useRef(false);
+          const timerDeadline = useRef(null);
+          const aiRequest = useRef(null);
+
+          // 学习数据状态
+          const [taskStatus, setTaskStatus] = useState(initialProgress.taskStatus);
+          const [notes, setNotes] = useState(initialProgress.notes);
+          const [extraTasks, setExtraTasks] = useState(initialProgress.extraTasks);
+          const [dailyMoods, setDailyMoods] = useState(initialProgress.dailyMoods);
+          const [expandedDays, setExpandedDays] = useState({});
+          const [streak, setStreak] = useState(initialProgress.streak);
+
+          // UI 与 AI 交互状态
+          const [noteModal, setNoteModal] = useState({ isOpen: false, taskId: null, text: '', taskType: '' });
+          const [aiResponse, setAiResponse] = useState('');
+          const [isAiLoading, setIsAiLoading] = useState(false);
+
+          // 专注时钟状态
+          const [timeLeft, setTimeLeft] = useState(25 * 60);
+          const [isTimerRunning, setIsTimerRunning] = useState(false);
+          const [timerMode, setTimerMode] = useState('work'); // work, break
+          const [activeSound, setActiveSound] = useState(null);
+          const audioRefs = useRef({});
+
+          const applyProgress = (data) => {
+            setTaskStatus(data.taskStatus || {}); setNotes(data.notes || {});
+            setExtraTasks(data.extraTasks || {}); setDailyMoods(data.dailyMoods || {});
+            setStreak(data.streak || 0);
+          };
+
+          const storeProgress = (data) => {
+            try { localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); setStorageError(''); }
+            catch { setStorageError('浏览器无法保存数据，请使用下方按钮导出备份。'); }
+          };
+
+          const checkLocalWeek = () => {
+            const { progress, archive } = rolloverProgress(progressRef.current);
+            if (!archive) return;
+            try {
+              const archives = readStored('ielts-zen-archives', {});
+              localStorage.setItem('ielts-zen-archives', JSON.stringify({ ...archives, [archive.weekId]: archive }));
+            } catch { setStorageError('归档保存失败，本周数据已保留，请先导出备份。'); return; }
+            progressRef.current = progress;
+            pendingArchives.current[archive.weekId] = archive;
+            storeProgress(progress);
+            applyProgress(progress);
+            if (cloudReady.current) syncToCloud({});
+          };
+
+          useEffect(() => {
+            checkLocalWeek();
+            const interval = setInterval(checkLocalWeek, 60000);
+            return () => { clearInterval(interval); aiRequest.current?.abort(); };
+          }, []);
+
+          useEffect(() => {
+            try {
+              localStorage.setItem('ielts-zen-dark', JSON.stringify(isDarkMode));
+              localStorage.setItem('ielts-zen-exam', JSON.stringify(examDate));
+            } catch { setStorageError('浏览器无法保存设置，请检查存储权限。'); }
+          }, [isDarkMode, examDate]);
+
+          const exportProgress = () => {
+            const blob = new Blob([JSON.stringify({ progress: progressRef.current, archives: readStored('ielts-zen-archives', {}) }, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url; link.download = 'ielts-zen-backup.json'; link.click();
+            setTimeout(() => URL.revokeObjectURL(url), 1000);
+          };
+
+          // --- 1. 认证与音频初始化 ---
+          useEffect(() => {
+            const initAuth = async () => {
+              try {
+                await signInAnonymously(auth);
+              } catch (err) {
+                setSyncStatus('云端登录失败 · 已保留本地数据，请检查 Firebase 配置');
+              }
+            };
+            if (auth) initAuth();
+            const unsubscribeAuth = auth ? onAuthStateChanged(auth, setUser) : () => {};
+
+            // 初始化环境音
+            audioRefs.current = {
+                rain: new Audio('https://cdn.pixabay.com/download/audio/2021/08/04/audio_0625c1539c.mp3?filename=heavy-rain-nature-sounds-8186.mp3'),
+                cafe: new Audio('https://cdn.pixabay.com/download/audio/2022/01/18/audio_d0a13f69d2.mp3?filename=cafe-background-noise-10-minutes-8014.mp3'),
+                noise: new Audio('https://cdn.pixabay.com/download/audio/2022/03/15/audio_8e64593e7d.mp3?filename=white-noise-8117.mp3')
+            };
+            Object.values(audioRefs.current).forEach(audio => { audio.loop = true; audio.volume = 0.4; });
+
+            return () => {
+                unsubscribeAuth();
+                Object.values(audioRefs.current).forEach(audio => { audio.pause(); audio.src = ''; });
+            };
+          }, []);
+
+          // --- 2. 云端数据同步监听 ---
+          useEffect(() => {
+            if (!user) return;
+            const dataRef = doc(db, 'users', user.uid, 'learningData', 'progress');
+            const unsubscribeData = onSnapshot(dataRef, { includeMetadataChanges: true }, async (docSnap) => {
+              // A missing cache entry is not evidence that the server document is absent.
+              if (docSnap.metadata.fromCache || docSnap.metadata.hasPendingWrites) {
+                setSyncStatus('等待云端确认 · 本地数据已保留');
+                return;
+              }
+              if (rolloverInFlight.current) return;
+              try {
+                if (!docSnap.exists()) {
+                  cloudReady.current = true;
+                  await syncToCloud({});
+                  return;
+                }
+                const { progress, archive } = rolloverProgress(docSnap.data());
+                if (archive) {
+                  rolloverInFlight.current = true;
+                  const batch = writeBatch(db);
+                  batch.set(doc(db, 'users', user.uid, 'archives', archive.weekId), archive);
+                  batch.set(dataRef, progress);
+                  await batch.commit();
+                  rolloverInFlight.current = false;
+                }
+                // Retain locally saved edits made while offline; whole-document last write wins.
+                if ((progressRef.current.updatedAt || 0) > (progress.updatedAt || 0)) {
+                  cloudReady.current = true;
+                  await syncToCloud({});
+                } else {
+                  progressRef.current = { ...emptyProgress(), ...progress };
+                  storeProgress(progressRef.current);
+                  applyProgress(progressRef.current);
+                }
+                cloudReady.current = true;
+                setSyncStatus(docSnap.metadata.fromCache ? '云端缓存 · 本地数据已保存' : '云端已连接 · 当前浏览器匿名账户');
+              } catch {
+                rolloverInFlight.current = false;
+                setSyncStatus('云同步失败 · 本地数据已保留，请检查网络与安全规则');
+              }
+            }, () => { cloudReady.current = false; setSyncStatus('云同步不可用 · 本地数据已保留'); });
+            return () => { cloudReady.current = false; unsubscribeData(); };
+          }, [user]);
+
+          // Use a deadline so background-tab throttling does not extend the session.
+          useEffect(() => {
+            if (!isTimerRunning) return;
+            timerDeadline.current = Date.now() + timeLeft * 1000;
+            const tick = () => {
+              const seconds = remainingSeconds(timerDeadline.current);
+              setTimeLeft(seconds);
+              if (seconds === 0) {
+                setIsTimerRunning(false);
+                setSyncStatus(timerMode === 'work' ? '专注结束，休息一下吧！' : '休息结束，可以开始下一轮专注。');
+              }
+            };
+            const interval = setInterval(tick, 250);
+            document.addEventListener('visibilitychange', tick);
+            return () => { clearInterval(interval); document.removeEventListener('visibilitychange', tick); };
+          }, [isTimerRunning, timerMode]);
+
+          const formatTime = (seconds) => {
+            const m = Math.floor(seconds / 60).toString().padStart(2, '0');
+            const s = (seconds % 60).toString().padStart(2, '0');
+            return `${m}:${s}`;
+          };
+
+          const switchTimerMode = (mode) => {
+            setTimerMode(mode);
+            setIsTimerRunning(false);
+            setTimeLeft(mode === 'work' ? 25 * 60 : 5 * 60);
+          };
+
+          const toggleSound = (soundType) => {
+            if (activeSound === soundType) {
+              audioRefs.current[soundType].pause();
+              setActiveSound(null);
+            } else {
+              if (activeSound) audioRefs.current[activeSound].pause();
+              setActiveSound(soundType);
+              audioRefs.current[soundType].play().catch(() => {
+                setActiveSound(current => current === soundType ? null : current);
+                setSyncStatus('环境音加载失败，请检查网络或选择其他声音。');
+              });
+            }
+          };
+
+          // --- 4. 核心交互同步逻辑 ---
+          const syncToCloud = async (newData) => {
+            checkLocalWeek();
+            const data = { ...progressRef.current, ...newData, updatedAt: Math.max(Date.now(), (progressRef.current.updatedAt || 0) + 1) };
+            progressRef.current = data;
+            storeProgress(data);
+            const uid = cloudUser.current?.uid;
+            if (!uid || !cloudReady.current) return;
+            const archives = { ...pendingArchives.current };
+            const write = async () => {
+              setSyncStatus('正在同步 · 本地数据已保存');
+              const batch = writeBatch(db);
+              for (const [weekId, archive] of Object.entries(archives)) batch.set(doc(db, 'users', uid, 'archives', weekId), archive);
+              batch.set(doc(db, 'users', uid, 'learningData', 'progress'), data);
+              await batch.commit();
+              for (const weekId of Object.keys(archives)) delete pendingArchives.current[weekId];
+              setSyncStatus('云端已连接 · 当前浏览器匿名账户');
+            };
+            cloudWrites.current = cloudWrites.current.then(write).catch(() => setSyncStatus('云同步失败 · 本地数据已保留'));
+            await cloudWrites.current;
+          };
+
+          const handleToggleTask = (taskId) => {
+            checkLocalWeek();
+            const data = progressRef.current;
+            const currentStatus = data.taskStatus[taskId];
+            const newStatus = !currentStatus ? 'completed' : currentStatus === 'completed' ? 'skipped' : null;
+            const newTaskStatus = { ...data.taskStatus, [taskId]: newStatus };
+            const streakUpdate = newStatus === 'completed' ? completionStreak(data.streak, data.lastActive) : {};
+            setTaskStatus(newTaskStatus);
+            if (streakUpdate.streak !== undefined) setStreak(streakUpdate.streak);
+            syncToCloud({ taskStatus: newTaskStatus, ...streakUpdate });
+          };
+
+          const handleExtraTaskChange = (dayId, text) => {
+            checkLocalWeek();
+            const updated = { ...progressRef.current.extraTasks, [dayId]: text };
+            setExtraTasks(updated);
+            progressRef.current = { ...progressRef.current, extraTasks: updated, updatedAt: Math.max(Date.now(), (progressRef.current.updatedAt || 0) + 1) };
+            storeProgress(progressRef.current);
+          };
+          const handleExtraTaskBlur = () => syncToCloud({});
+
+          const handleMoodChange = (dayId, mood) => {
+            checkLocalWeek();
+            const newMoods = { ...progressRef.current.dailyMoods, [dayId]: mood };
+            setDailyMoods(newMoods);
+            syncToCloud({ dailyMoods: newMoods });
+          };
+
+          const toggleDayExpansion = (dayId) => {
+            setExpandedDays(prev => ({ ...prev, [dayId]: !prev[dayId] }));
+          };
+
+          const saveNote = () => {
+            if (!noteModal.taskId) return;
+            checkLocalWeek();
+            const newNotes = { ...progressRef.current.notes, [noteModal.taskId]: noteModal.text };
+            setNotes(newNotes);
+            syncToCloud({ notes: newNotes });
+            closeNote();
+          };
+
+          // AI keys live on a server; the browser sends only the requested note.
+          const fetchGeminiAdvice = async (noteText, taskType) => {
+            if (!noteText.trim() || !config.aiEndpoint) return;
+            aiRequest.current?.abort();
+            const controller = new AbortController();
+            aiRequest.current = controller;
+            setIsAiLoading(true); setAiResponse('');
+            try {
+              const response = await fetch(config.aiEndpoint, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                signal: controller.signal,
+                body: JSON.stringify({ note: noteText, taskType }),
+              });
+              const data = await response.json();
+              if (!response.ok) throw new Error(data.error || 'AI 服务暂不可用');
+              if (!data.text) throw new Error('AI 未返回文字，请换一种表达方式重试');
+              if (aiRequest.current === controller) setAiResponse(data.text);
+            } catch (error) {
+              if (error.name !== 'AbortError' && aiRequest.current === controller) setAiResponse(`请求失败: ${error.message}`);
+            } finally { if (aiRequest.current === controller) setIsAiLoading(false); }
+          };
+          const closeNote = () => {
+            aiRequest.current?.abort(); aiRequest.current = null;
+            setIsAiLoading(false); setAiResponse('');
+            setNoteModal({ isOpen: false, taskId: null, text: '', taskType: '' });
+          };
+
+          // --- 6. 视图组件 ---
+
+          const renderDashboard = () => {
+            const completedCount = Object.values(taskStatus).filter(s => s === 'completed').length;
+            const progressPercent = Math.round((completedCount / TOTAL_TASKS) * 100) || 0;
+            const daysLeft = daysUntil(examDate);
+
             return (
-              <div className="min-h-screen bg-slate-50 dark:bg-slate-900 flex items-center justify-center transition-colors duration-500">
-                <div className="animate-spin rounded-full h-12 w-12 border-4 border-indigo-200 dark:border-slate-700 border-t-indigo-600 dark:border-t-indigo-500"></div>
+              <div className="space-y-6 animate-[fadeIn_0.7s_ease-out]">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="bg-white/60 dark:bg-slate-800/60 backdrop-blur-xl p-5 rounded-3xl shadow-lg border border-white/40 dark:border-slate-700 flex items-center gap-4 transition-transform hover:scale-[1.02]">
+                    <div className={`p-3 rounded-2xl ${streak > 0 ? 'bg-orange-100 dark:bg-orange-900/50' : 'bg-slate-100 dark:bg-slate-700'}`}>
+                      <Flame size={28} className={streak > 0 ? 'text-orange-500 fill-orange-500' : 'text-slate-400'} />
+                    </div>
+                    <div>
+                      <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-0.5">连胜纪录</p>
+                      <div className="flex items-baseline gap-1">
+                        <span className="text-2xl font-black text-slate-800 dark:text-white">{streak}</span>
+                        <span className="text-sm font-semibold text-slate-500 dark:text-slate-400">Days</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="bg-white/60 dark:bg-slate-800/60 backdrop-blur-xl p-5 rounded-3xl shadow-lg border border-white/40 dark:border-slate-700 flex items-center gap-4 transition-transform hover:scale-[1.02]">
+                    <div className="p-3 rounded-2xl bg-indigo-100 dark:bg-indigo-900/50">
+                      <Clock size={28} className="text-indigo-500 dark:text-indigo-400" />
+                    </div>
+                    <div>
+                      <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-0.5">屠鸭倒数</p>
+                      <div className="flex items-baseline gap-1">
+                        <span className="text-2xl font-black text-indigo-600 dark:text-indigo-400">{daysLeft ?? '—'}</span>
+                        <span className="text-sm font-semibold text-slate-500 dark:text-slate-400">Days</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <label className="block text-sm text-slate-600 dark:text-slate-300">
+                  考试日期
+                  <input aria-label="考试日期" type="date" value={examDate} onInput={e => setExamDate(e.currentTarget.value)} onChange={e => setExamDate(e.target.value)} className="ml-3 p-2 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700" />
+                </label>
+                <div className="relative overflow-hidden bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 dark:from-indigo-900 dark:via-purple-900 dark:to-slate-900 p-8 rounded-[2.5rem] text-white shadow-2xl mt-6">
+                  <div className="absolute top-0 right-0 w-64 h-64 bg-white opacity-10 rounded-full blur-3xl transform translate-x-1/3 -translate-y-1/3"></div>
+
+                  <div className="relative z-10 flex flex-col items-center">
+                    <h2 className="text-lg font-semibold opacity-90 mb-6 tracking-wide">本周总体进度</h2>
+                    <div className="relative w-48 h-48 flex items-center justify-center">
+                      <svg className="w-full h-full transform -rotate-90" viewBox="0 0 100 100">
+                        <circle cx="50" cy="50" r="40" stroke="currentColor" strokeWidth="8" fill="transparent" className="text-white/20" />
+                        <circle cx="50" cy="50" r="40" stroke="currentColor" strokeWidth="8" fill="transparent" className="text-white drop-shadow-[0_0_8px_rgba(255,255,255,0.6)] transition-all duration-1000 ease-out" strokeDasharray="251.2" strokeDashoffset={251.2 - (251.2 * progressPercent) / 100} strokeLinecap="round" />
+                      </svg>
+                      <div className="absolute flex flex-col items-center">
+                        <span className="text-5xl font-black tracking-tighter ml-2">{progressPercent}<span className="text-2xl font-bold opacity-70 ml-1">%</span></span>
+                        <span className="text-xs font-medium opacity-80 mt-1">{completedCount} / {TOTAL_TASKS} Tasks</span>
+                      </div>
+                    </div>
+                    <p className="mt-8 text-sm font-medium opacity-90 text-center max-w-xs leading-relaxed">
+                      {progressPercent === 100 ? "Amazing! 完美的一周！🎉" : progressPercent > 50 ? "进度过半，稳住节奏！🔥" : "千里之行，始于足下，马上开始！✨"}
+                    </p>
+                  </div>
+                </div>
               </div>
             );
-          }
+          };
+
+          const renderFocusTimer = () => {
+            return (
+              <div className="space-y-6 animate-[fadeIn_0.7s_ease-out]">
+                <header className="text-center mb-8">
+                  <h1 className="text-3xl font-extrabold text-slate-800 dark:text-white">Zen Timer</h1>
+                  <p className="text-slate-500 dark:text-slate-400 mt-2 text-sm">沉浸式备考，屏蔽一切干扰。</p>
+                </header>
+
+                {/* 计时器主体 */}
+                <div className="bg-white/60 dark:bg-slate-800/60 backdrop-blur-xl p-8 rounded-[3rem] shadow-2xl border border-white/40 dark:border-slate-700 flex flex-col items-center">
+                  <div className="flex gap-4 mb-8 bg-slate-100/50 dark:bg-slate-900/50 p-1.5 rounded-full">
+                    <button onClick={() => switchTimerMode('work')} className={`px-6 py-2 rounded-full text-sm font-bold transition-all ${timerMode === 'work' ? 'bg-white dark:bg-slate-700 shadow-sm text-indigo-600 dark:text-indigo-400' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700'}`}>
+                      专注 25m
+                    </button>
+                    <button onClick={() => switchTimerMode('break')} className={`px-6 py-2 rounded-full text-sm font-bold transition-all ${timerMode === 'break' ? 'bg-white dark:bg-slate-700 shadow-sm text-emerald-600 dark:text-emerald-400' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700'}`}>
+                      休息 5m
+                    </button>
+                  </div>
+
+                  <div className="text-[5rem] font-black text-slate-800 dark:text-white tracking-tighter tabular-nums mb-8 drop-shadow-sm">
+                    {formatTime(timeLeft)}
+                  </div>
+
+                  <div className="flex gap-6 mb-4">
+                    <button aria-label={isTimerRunning ? '暂停计时' : '开始计时'} onClick={() => setIsTimerRunning(!isTimerRunning)} className="w-16 h-16 flex items-center justify-center bg-indigo-600 hover:bg-indigo-700 text-white rounded-full shadow-lg shadow-indigo-200 dark:shadow-none transition-transform active:scale-95">
+                      {isTimerRunning ? <Pause size={28} fill="currentColor" /> : <Play size={28} fill="currentColor" className="ml-1" />}
+                    </button>
+                    <button aria-label="重置计时" onClick={() => switchTimerMode(timerMode)} className="w-16 h-16 flex items-center justify-center bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-600 dark:text-slate-300 rounded-full transition-transform active:scale-95">
+                      <RotateCcw size={24} />
+                    </button>
+                  </div>
+                </div>
+
+                {/* 环境音控制 */}
+                <div className="grid grid-cols-3 gap-4">
+                  <button onClick={() => toggleSound('rain')} className={`flex flex-col items-center justify-center gap-2 p-5 rounded-3xl border transition-all ${activeSound === 'rain' ? 'bg-blue-50 border-blue-200 text-blue-600 dark:bg-blue-900/40 dark:border-blue-800 dark:text-blue-400 shadow-md' : 'bg-white/60 dark:bg-slate-800/60 border-transparent text-slate-400 dark:text-slate-500 hover:bg-white dark:hover:bg-slate-800'}`}>
+                    <CloudRain size={28} />
+                    <span className="text-xs font-bold">雨声</span>
+                  </button>
+                  <button onClick={() => toggleSound('cafe')} className={`flex flex-col items-center justify-center gap-2 p-5 rounded-3xl border transition-all ${activeSound === 'cafe' ? 'bg-orange-50 border-orange-200 text-orange-600 dark:bg-orange-900/40 dark:border-orange-800 dark:text-orange-400 shadow-md' : 'bg-white/60 dark:bg-slate-800/60 border-transparent text-slate-400 dark:text-slate-500 hover:bg-white dark:hover:bg-slate-800'}`}>
+                    <Coffee size={28} />
+                    <span className="text-xs font-bold">咖啡馆</span>
+                  </button>
+                  <button onClick={() => toggleSound('noise')} className={`flex flex-col items-center justify-center gap-2 p-5 rounded-3xl border transition-all ${activeSound === 'noise' ? 'bg-slate-100 border-slate-300 text-slate-700 dark:bg-slate-700 dark:border-slate-500 dark:text-white shadow-md' : 'bg-white/60 dark:bg-slate-800/60 border-transparent text-slate-400 dark:text-slate-500 hover:bg-white dark:hover:bg-slate-800'}`}>
+                    <Waves size={28} />
+                    <span className="text-xs font-bold">白噪音</span>
+                  </button>
+                </div>
+              </div>
+            );
+          };
+
+          const renderPlanner = () => {
+            const todayDayId = new Date().getDay() || 7;
+
+            return (
+              <div className="space-y-6 pb-24 animate-[fadeIn_0.7s_ease-out]">
+                <header className="mb-6">
+                  <h1 className="text-2xl font-bold text-slate-800 dark:text-white">Weekly Plan</h1>
+                  <p className="text-slate-500 dark:text-slate-400 text-sm">点击方框打卡，点击👇展开复盘面板。</p>
+                </header>
+
+                <div className="space-y-5">
+                  {WEEK_TASKS.map((dayData) => {
+                    const isToday = dayData.dayId === todayDayId;
+                    const isExpanded = expandedDays[dayData.dayId];
+                    const selectedMood = dailyMoods[dayData.dayId];
+
+                    return (
+                      <div key={dayData.dayId} className={`bg-white/60 dark:bg-slate-800/80 backdrop-blur-md rounded-3xl border ${isToday ? 'border-indigo-400 ring-4 ring-indigo-50 dark:ring-indigo-900/30' : 'border-white/50 dark:border-slate-700'} shadow-sm overflow-hidden transition-all duration-300`}>
+                        <div className={`px-5 py-4 border-b border-slate-100 dark:border-slate-700/50 flex justify-between items-center ${isToday ? 'bg-indigo-50/50 dark:bg-indigo-900/20' : 'bg-slate-50/30 dark:bg-slate-800/30'}`}>
+                          <div className="flex items-center gap-2">
+                            <h3 className="font-bold text-slate-700 dark:text-slate-200">{dayData.dayName}</h3>
+                            <span className="text-xs font-semibold text-slate-400 dark:text-slate-500 uppercase">{dayData.en}</span>
+                            {selectedMood && !isExpanded && <span className="ml-2 text-lg">{selectedMood}</span>}
+                          </div>
+                          {isToday && <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-indigo-500 text-white shadow-sm">TODAY</span>}
+                        </div>
+
+                        <div className="p-5 space-y-4">
+                          {dayData.tasks.map(task => {
+                            const status = taskStatus[task.id];
+                            const hasNote = notes[task.id] && notes[task.id].trim() !== '';
+
+                            return (
+                              <div key={task.id} className="flex gap-3 group">
+                                <button
+                                  aria-label={`${task.text}：${status === 'completed' ? '已完成' : status === 'skipped' ? '已跳过' : '待办'}`} onClick={() => handleToggleTask(task.id)}
+                                  className={`mt-1 flex-shrink-0 w-6 h-6 rounded-md border-2 flex items-center justify-center transition-all duration-300
+                                    ${status === 'completed' ? 'bg-indigo-500 border-indigo-500 shadow-md transform scale-105' :
+                                      status === 'skipped' ? 'bg-rose-500 border-rose-500 shadow-md transform scale-105' :
+                                      'bg-white dark:bg-slate-700 border-slate-300 dark:border-slate-500 hover:border-indigo-400'}`}
+                                >
+                                  {status === 'completed' && <CheckCircle2 size={16} className="text-white" strokeWidth={3} />}
+                                  {status === 'skipped' && <X size={16} className="text-white" strokeWidth={3} />}
+                                </button>
+
+                                <div className="flex-grow">
+                                  <div className={`transition-all duration-300 ${status === 'completed' ? 'opacity-50 line-through dark:opacity-40' : status === 'skipped' ? 'opacity-50 line-through text-rose-800 dark:text-rose-400' : ''}`}>
+                                    <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold mb-1.5 mr-2 ${task.color}`}>
+                                      {task.type}
+                                    </span>
+                                    <span className={`text-sm font-medium leading-snug ${status === 'skipped' ? 'text-rose-700 dark:text-rose-400' : 'text-slate-700 dark:text-slate-300'}`}>{task.text}</span>
+                                  </div>
+
+                                  <div className="mt-1 flex items-start gap-2">
+                                    <button
+                                      onClick={() => { aiRequest.current?.abort(); aiRequest.current = null; setIsAiLoading(false); setNoteModal({ isOpen: true, taskId: task.id, text: notes[task.id] || '', taskType: task.type }); setAiResponse(''); }}
+                                      className={`text-xs font-medium flex items-center gap-1 transition-colors ${hasNote ? 'text-indigo-600 dark:text-indigo-400' : 'text-slate-400 dark:text-slate-500 hover:text-indigo-500 opacity-100'}`}
+                                    >
+                                      <Edit3 size={12} /> {hasNote ? '查看难点笔记' : '添加学习难点...'}
+                                    </button>
+                                  </div>
+                                  {hasNote && (
+                                    <div className="mt-2 p-2 bg-yellow-50/80 dark:bg-yellow-900/20 border border-yellow-100 dark:border-yellow-700/50 rounded-lg text-xs text-slate-600 dark:text-slate-400 italic">
+                                      "{notes[task.id]}"
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+
+                          {/* 折叠/展开面板按钮 */}
+                          <div className="pt-2 border-t border-slate-100/80 dark:border-slate-700/50 flex justify-center">
+                            <button
+                              onClick={() => toggleDayExpansion(dayData.dayId)}
+                              className="text-xs font-bold text-slate-400 hover:text-indigo-500 dark:hover:text-indigo-400 flex items-center gap-1 transition-colors py-1 px-4 rounded-full hover:bg-slate-50 dark:hover:bg-slate-700"
+                            >
+                              {isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                              今日复盘 & 心情
+                            </button>
+                          </div>
+
+                          {/* 展开的复盘面板 */}
+                          {isExpanded && (
+                            <div className="mt-2 space-y-4 animate-[fadeIn_0.3s_ease-out]">
+                              <div>
+                                <p className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase mb-2 flex items-center gap-1">
+                                  <Smile size={12} className="text-pink-400"/> 选择今日心情
+                                </p>
+                                <div className="flex gap-2 justify-between px-1">
+                                  {MOOD_EMOJIS.map(emoji => (
+                                    <button
+                                      key={emoji}
+                                      aria-label={`心情 ${emoji}`} aria-pressed={selectedMood === emoji} onClick={() => handleMoodChange(dayData.dayId, emoji)}
+                                      className={`text-xl transition-transform hover:scale-125 ${selectedMood === emoji ? 'scale-125 drop-shadow-md' : 'grayscale opacity-40'}`}
+                                    >
+                                      {emoji}
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+                              <div>
+                                <p className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase mb-2 flex items-center gap-1">
+                                  <Edit3 size={12} className="text-indigo-400"/> 额外心得 / 补充任务
+                                </p>
+                                <textarea
+                                  className="w-full bg-white/50 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-600 rounded-xl p-3 text-sm text-slate-700 dark:text-slate-300 focus:ring-2 focus:ring-indigo-400 outline-none resize-none transition-all placeholder-slate-400 dark:placeholder-slate-500"
+                                  aria-label={`${dayData.dayName}复盘`}
+                                  rows="2"
+                                  placeholder="写下今天的备考感悟或额外背的单词吧..."
+                                  value={extraTasks[dayData.dayId] || ''}
+                                  onChange={(e) => handleExtraTaskChange(dayData.dayId, e.target.value)}
+                                  onBlur={handleExtraTaskBlur}
+                                ></textarea>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          };
 
           return (
             <div className={`min-h-screen font-sans pb-24 relative overflow-hidden transition-colors duration-500 ${isDarkMode ? 'dark bg-slate-900' : 'bg-slate-50'}`}>
@@ -675,11 +731,13 @@
                 .animate-blob { animation: blob 10s infinite; }
                 .animation-delay-2000 { animation-delay: 2s; }
                 .animation-delay-4000 { animation-delay: 4s; }
-                
-                /* 隐藏原生的滚动条使界面更沉浸 */
-                ::-webkit-scrollbar { width: 0px; background: transparent; }
+
+                button:focus-visible { outline: 3px solid #818cf8; outline-offset: 3px; }
+                @media (prefers-reduced-motion: reduce) {
+                  *, *::before, *::after { animation: none !important; transition: none !important; }
+                }
               `}</style>
-              
+
               {/* 动态背景，支持暗黑模式颜色变化 */}
               <div className="fixed inset-0 pointer-events-none z-0">
                 <div className={`absolute top-[-10%] left-[-10%] w-[50%] h-[50%] rounded-full mix-blend-multiply filter blur-[120px] opacity-40 animate-blob transition-colors duration-700 ${isDarkMode ? 'bg-purple-900' : 'bg-purple-300'}`}></div>
@@ -690,65 +748,74 @@
               {/* 顶部工具栏 (暗黑模式切换 & Logo) */}
               <div className="relative z-20 flex justify-between items-center px-6 pt-8 max-w-md mx-auto">
                 <h2 className="text-xl font-black text-slate-800 dark:text-white tracking-tighter">IELTS ZEN.</h2>
-                <button 
-                  onClick={() => setIsDarkMode(!isDarkMode)} 
+                <button
+                  aria-label={isDarkMode ? '切换亮色模式' : '切换暗色模式'}
+                  onClick={() => setIsDarkMode(!isDarkMode)}
                   className="p-2.5 bg-white/60 dark:bg-slate-800/60 backdrop-blur-md rounded-full text-slate-600 dark:text-slate-300 shadow-sm border border-white/40 dark:border-slate-700 transition-transform active:scale-95"
                 >
                   {isDarkMode ? <Sun size={20} /> : <Moon size={20} />}
                 </button>
               </div>
 
+              <div className="relative z-10 max-w-md mx-auto px-5 pt-4 text-xs text-slate-500 dark:text-slate-400" role="status">
+                {syncStatus}
+                {storageError && <p className="text-rose-600 dark:text-rose-400">{storageError}</p>}
+                <button onClick={exportProgress} className="ml-2 underline" aria-label="导出学习数据备份">导出备份</button>
+              </div>
               <div className="max-w-md mx-auto relative z-10 px-5 pt-6 min-h-screen flex flex-col">
-                {activeTab === 'dashboard' && <Dashboard />}
-                {activeTab === 'planner' && <Planner />}
-                {activeTab === 'timer' && <FocusTimer />}
-                {activeTab === 'canvas' && <Sketchpad />}
+                {activeTab === 'dashboard' && renderDashboard()}
+                {activeTab === 'planner' && renderPlanner()}
+                {activeTab === 'timer' && renderFocusTimer()}
+                <div className={activeTab === 'canvas' ? '' : 'hidden'}>
+                  {canvasVisited && <Sketchpad isDarkMode={isDarkMode} />}
+                </div>
               </div>
 
               {/* 底部悬浮导航 */}
               <nav className="fixed bottom-6 left-1/2 transform -translate-x-1/2 bg-white/80 dark:bg-slate-800/80 backdrop-blur-2xl border border-white/50 dark:border-slate-700 px-6 py-4 rounded-[2rem] shadow-[0_8px_30px_rgba(0,0,0,0.12)] dark:shadow-[0_8px_30px_rgba(0,0,0,0.4)] z-50 flex gap-8">
-                <button onClick={() => setActiveTab('dashboard')} className={`flex flex-col items-center gap-1 transition-all active:scale-90 ${activeTab === 'dashboard' ? 'text-indigo-600 dark:text-indigo-400 scale-110' : 'text-slate-400 dark:text-slate-500'}`}>
+                <button aria-label="仪表盘" aria-current={activeTab === 'dashboard' ? 'page' : undefined} onClick={() => setActiveTab('dashboard')} className={`flex flex-col items-center gap-1 transition-all active:scale-90 ${activeTab === 'dashboard' ? 'text-indigo-600 dark:text-indigo-400 scale-110' : 'text-slate-400 dark:text-slate-500'}`}>
                   <LayoutDashboard size={24} className={activeTab === 'dashboard' ? 'fill-indigo-100 dark:fill-indigo-900' : ''} />
                 </button>
-                <button onClick={() => setActiveTab('planner')} className={`flex flex-col items-center gap-1 transition-all active:scale-90 ${activeTab === 'planner' ? 'text-indigo-600 dark:text-indigo-400 scale-110' : 'text-slate-400 dark:text-slate-500'}`}>
+                <button aria-label="周计划" aria-current={activeTab === 'planner' ? 'page' : undefined} onClick={() => setActiveTab('planner')} className={`flex flex-col items-center gap-1 transition-all active:scale-90 ${activeTab === 'planner' ? 'text-indigo-600 dark:text-indigo-400 scale-110' : 'text-slate-400 dark:text-slate-500'}`}>
                   <CalendarCheck size={24} className={activeTab === 'planner' ? 'fill-indigo-100 dark:fill-indigo-900' : ''} />
                 </button>
-                <button onClick={() => setActiveTab('timer')} className={`flex flex-col items-center gap-1 transition-all active:scale-90 ${activeTab === 'timer' ? 'text-indigo-600 dark:text-indigo-400 scale-110' : 'text-slate-400 dark:text-slate-500'}`}>
+                <button aria-label="专注时钟" aria-current={activeTab === 'timer' ? 'page' : undefined} onClick={() => setActiveTab('timer')} className={`flex flex-col items-center gap-1 transition-all active:scale-90 ${activeTab === 'timer' ? 'text-indigo-600 dark:text-indigo-400 scale-110' : 'text-slate-400 dark:text-slate-500'}`}>
                   <Timer size={24} className={activeTab === 'timer' ? 'fill-indigo-100 dark:fill-indigo-900' : ''} />
                 </button>
-                <button onClick={() => setActiveTab('canvas')} className={`flex flex-col items-center gap-1 transition-all active:scale-90 ${activeTab === 'canvas' ? 'text-indigo-600 dark:text-indigo-400 scale-110' : 'text-slate-400 dark:text-slate-500'}`}>
+                <button aria-label="手绘板" aria-current={activeTab === 'canvas' ? 'page' : undefined} onClick={() => { setCanvasVisited(true); setActiveTab('canvas'); }} className={`flex flex-col items-center gap-1 transition-all active:scale-90 ${activeTab === 'canvas' ? 'text-indigo-600 dark:text-indigo-400 scale-110' : 'text-slate-400 dark:text-slate-500'}`}>
                   <Edit3 size={24} className={activeTab === 'canvas' ? 'fill-indigo-100 dark:fill-indigo-900' : ''} />
                 </button>
               </nav>
 
               {/* AI 难点记录弹窗 */}
               {noteModal.isOpen && (
-                <div className="fixed inset-0 bg-slate-900/40 dark:bg-slate-950/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4 animate-[fadeIn_0.3s_ease-out]">
+                <div role="dialog" aria-modal="true" aria-label="学习笔记与难点" className="fixed inset-0 bg-slate-900/40 dark:bg-slate-950/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4 animate-[fadeIn_0.3s_ease-out]">
                   <div className="bg-white dark:bg-slate-800 w-full max-w-sm rounded-[2.5rem] shadow-2xl border border-white/20 dark:border-slate-700 overflow-hidden">
                     <div className="p-6">
                       <div className="flex justify-between items-center mb-4">
                         <h3 className="text-lg font-bold text-slate-800 dark:text-white">学习笔记 & 难点</h3>
-                        <button onClick={() => { setNoteModal({ isOpen: false, taskId: null, text: '', taskType: '' }); setAiResponse(''); }} className="p-2 bg-slate-100 dark:bg-slate-700 rounded-full text-slate-500 dark:text-slate-400 hover:bg-slate-200 transition-colors">
+                        <button onClick={closeNote} aria-label="关闭笔记" className="p-2 bg-slate-100 dark:bg-slate-700 rounded-full text-slate-500 dark:text-slate-400 hover:bg-slate-200 transition-colors">
                           <X size={18} />
                         </button>
                       </div>
                       <textarea
+                        aria-label="学习笔记"
                         autoFocus
                         value={noteModal.text}
                         onChange={(e) => setNoteModal({ ...noteModal, text: e.target.value })}
                         placeholder="例如：今天听力 Section 3 的匹配题错太多了..."
                         className="w-full h-32 p-4 bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-600 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none resize-none text-sm text-slate-700 dark:text-slate-300 placeholder-slate-400 transition-all"
                       />
-                      
+
                       <div className="flex justify-start mt-3 mb-2">
                         <button
                           onClick={() => fetchGeminiAdvice(noteModal.text, noteModal.taskType)}
-                          disabled={isAiLoading || !noteModal.text.trim()}
+                          disabled={!config.aiEndpoint || isAiLoading || !noteModal.text.trim()}
                           className="text-xs flex items-center gap-1.5 px-3 py-2 bg-purple-100 dark:bg-purple-900/40 text-purple-700 dark:text-purple-300 font-semibold rounded-lg transition-transform active:scale-95 disabled:opacity-50"
                         >
                           {isAiLoading ? <span className="animate-spin text-sm">⏳</span> : <Sparkles size={14} />}
-                          {isAiLoading ? 'AI 导师正在为你思考...' : 
-                           noteModal.taskType === '词汇' ? '✨ AI 生成高分例句' : 
+                          {!config.aiEndpoint ? 'AI 导师未配置' : isAiLoading ? 'AI 导师正在为你思考...' :
+                           noteModal.taskType === '词汇' ? '✨ AI 生成高分例句' :
                            noteModal.taskType === '写作' ? '✨ AI 拓展写作思路' : '✨ 获取 AI 导师建议'}
                         </button>
                       </div>
@@ -763,7 +830,7 @@
                       )}
 
                       <button onClick={saveNote} className="w-full mt-2 py-3.5 bg-indigo-600 dark:bg-indigo-500 text-white font-semibold rounded-2xl hover:bg-indigo-700 transition-transform active:scale-95 flex justify-center items-center gap-2 shadow-lg shadow-indigo-200 dark:shadow-none">
-                        <Save size={18} /> 保存并同步云端
+                        <Save size={18} /> 保存笔记
                       </button>
                     </div>
                   </div>
